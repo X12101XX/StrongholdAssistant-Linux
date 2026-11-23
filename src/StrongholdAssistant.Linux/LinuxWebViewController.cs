@@ -76,6 +76,24 @@ internal sealed class LinuxWebViewController : IDisposable
         }
     }
 
+    public void Hide()
+    {
+        lock (_gate)
+        {
+            _visible = false;
+            SendCommand("HIDE");
+        }
+    }
+
+    public void Show()
+    {
+        lock (_gate)
+        {
+            _visible = true;
+            SendCommand("SHOW");
+        }
+    }
+
     public void Resize(int w, int h) => SendCommand($"RESIZE {w} {h}");
     public void Minimize() => SendCommand("MINIMIZE");
     public void Maximize() => SendCommand("MAXIMIZE");

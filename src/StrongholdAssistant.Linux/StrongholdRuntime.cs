@@ -226,6 +226,7 @@ internal sealed class StrongholdRuntime : IDisposable
         };
 
         _scanner.SetShopScanSpeed(_api.Settings.ShopScanSpeed);
+        _overlay.UpdateRouteSettings(_api.Settings.Routes);
         _overlay.PlacementChanged += RefreshOverlay;
         _api.ShopChanged += () =>
         {
@@ -275,7 +276,12 @@ internal sealed class StrongholdRuntime : IDisposable
         };
 
         _api.InitializeControl(_capture, _scanner, _ocr, dataDir);
-        _api.ReadCurrentField = () => _scanner.ReadCurrentFieldAsync(CaptureInformationScreenAsync, _api.RecognizeFieldFrameAsync);
+        _api.ReadCurrentField = async () =>
+        {
+            var result = await _scanner.ReadCurrentFieldAsync(CaptureInformationScreenAsync, _api.RecognizeFieldFrameAsync);
+            AppLogger.Info("Field", $"手动识别完成: Map={result.MapId ?? "null"}, Round={result.Round?.ToString() ?? "null"}, Units={result.Units.Length} ({string.Join(", ", result.Units.Select(u => $"{u.Cell.Zone}({u.Cell.Col},{u.Cell.Row})={u.Operator ?? "?"}"))})");
+            return result;
+        };
         _scanner.BoardRoutesRequested = () => _api.BoardRoutesEnabled;
         _scanner.BoardFrameReady += (frame, reading) =>
         {
@@ -352,19 +358,43 @@ internal sealed class StrongholdRuntime : IDisposable
         if (_capture.Connection.IsAdb)
             return await Task.Run(() => _capture.CaptureScreen());
 
+        bool overlayWasVisible = _overlay.IsVisible;
+        bool hidWebView = false;
+        var game = _tracker.CurrentGameWindowHandle;
+
+        // If the assistant window is floating on the same workspace as Arknights,
+        // hide it briefly so wlr-screencopy doesn't capture the assistant over the game board.
+        if (game != IntPtr.Zero && _webView.IsRunning && NiriIpc.IsAvailable)
+        {
+            var wins = NiriIpc.GetWindows(force: true);
+            var gameWin = wins.FirstOrDefault(w => w.Id == (ulong)game);
+            var appWin = wins.FirstOrDefault(w =>
+                w.AppId.Equals("stronghold-assistant", StringComparison.OrdinalIgnoreCase)
+                || w.Title.Contains("高效雅雅", StringComparison.Ordinal));
+            if (gameWin is not null && appWin is { IsFloating: true } && appWin.WorkspaceId == gameWin.WorkspaceId)
+            {
+                _webView.Hide();
+                hidWebView = true;
+            }
+        }
+
         _overlay.SetCaptureHidden(true);
         try
         {
-            await Task.Delay(30);
+            if (hidWebView) await Task.Delay(120);
+            else if (overlayWasVisible) await Task.Delay(80);
+            else await Task.Delay(20);
+
+            NiriIpc.InvalidateCache();
             var frame = await Task.Run(() => _capture.CaptureWindowScreen());
             if (frame is not null) return frame;
 
             // If Arknights isn't currently on the active output view in niri, focus it briefly and capture.
-            var game = _tracker.CurrentGameWindowHandle;
             if (game != IntPtr.Zero && User32.IsWindow(game))
             {
                 User32.SetForegroundWindow(game);
                 await Task.Delay(180);
+                NiriIpc.InvalidateCache();
                 return await Task.Run(() => _capture.CaptureWindowScreen());
             }
             return null;
@@ -372,6 +402,7 @@ internal sealed class StrongholdRuntime : IDisposable
         finally
         {
             _overlay.SetCaptureHidden(false);
+            if (hidWebView) _webView.Show();
         }
     }
 

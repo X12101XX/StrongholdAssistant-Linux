@@ -68,6 +68,17 @@ internal sealed class LinuxOverlayController : IDisposable
             };
             _proc = Process.Start(psi);
             if (_proc is null) return false;
+            var stderr = _proc.StandardError;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (await stderr.ReadLineAsync() is { } line)
+                        if (!string.IsNullOrWhiteSpace(line))
+                            AppLogger.Warn("Overlay", line);
+                }
+                catch { }
+            });
             _stdin = new StreamWriter(_proc.StandardInput.BaseStream, new UTF8Encoding(false)) { AutoFlush = false };
             AppLogger.Info("Overlay", $"Started gtk4-layer-shell overlay helper ({bin}, pid={_proc.Id})");
             return true;
@@ -302,21 +313,56 @@ internal sealed class LinuxOverlayController : IDisposable
             if (cw <= 2 || ch <= 2) continue;
 
             bool secondary = kind == 0;
-            var (cr, cg, cb) = ParseHex(style.Color, kind == 2 ? (0.95, 0.70, 0.13) : kind == 1 ? (0.13, 0.89, 0.70) : (0.55, 0.75, 1.0));
+            var (cr, cg, cb) = ParseHex(style.Color, kind == 2 ? (0.95, 0.70, 0.13) : kind == 1 ? (0.13, 0.89, 0.70) : (0.69, 0.56, 0.99));
+            double Light(double c) => c + (1.0 - c) * 0.35;
+            double Dark(double c) => c * 0.14;
+
             double offset = 0.012 * cw;
             double fx = cx - offset, fy = cy - offset, fw = cw + 2 * offset, fh = ch + 2 * offset;
-            double thick = Math.Max(2.0, (secondary ? 0.014 : 0.020) * cw);
+            double thick = Math.Max(2.0, (secondary ? 0.012 : 0.017) * cw);
 
-            // Outer dark contrast border
+            // Outer dark contrast border (matches Windows ShopMarkerLayer)
             cmds.Add($"RECT {F(fx - 2)} {F(fy - 2)} {F(fw + 4)} {F(fh + 4)} 0 0 0 {F(secondary ? 0.65 : 0.75)} 2 0 0 0 0 0");
-            // Main colored border
-            cmds.Add($"RECT {F(fx)} {F(fy)} {F(fw)} {F(fh)} {F(cr)} {F(cg)} {F(cb)} 0.95 {F(thick)} {(secondary ? 1 : 0)} {F(cr)} {F(cg)} {F(cb)} {F(secondary ? 0.05 : 0.10)}");
+            // Inner dark contrast border
+            double innerThick = Math.Max(1.5, 0.012 * cw);
+            cmds.Add($"RECT {F(fx + thick)} {F(fy + thick)} {F(fw - 2 * thick)} {F(fh - 2 * thick)} 0 0 0 {F(secondary ? 0.70 : 0.80)} {F(innerThick)} 0 0 0 0 0");
+            // Main colored border (zero interior fill so card art and OCR stay 100% untouched)
+            cmds.Add($"RECT {F(fx)} {F(fy)} {F(fw)} {F(fh)} {F(cr)} {F(cg)} {F(cb)} 0.96 {F(thick)} {(secondary ? 1 : 0)} 0 0 0 0");
+
+            // Bright corner L-brackets for primary (key / tracked) cards
+            if (!secondary)
+            {
+                double cornerStroke = Math.Max(3.0, 0.029 * cw);
+                double arm = 0.115 * cw;
+                double left = fx + cornerStroke * 0.5, top = fy + cornerStroke * 0.5;
+                double right = fx + fw - cornerStroke * 0.5, bottom = fy + fh - cornerStroke * 0.5;
+                double lr = Light(cr), lg = Light(cg), lb = Light(cb);
+                // Top-left L
+                cmds.Add($"POLY 3 {F(left)} {F(top + arm)} {F(left)} {F(top)} {F(left + arm)} {F(top)} 0 0 0 0.85 {F(cornerStroke + 3)} 0 0 0 0 0 0");
+                cmds.Add($"POLY 3 {F(left)} {F(top + arm)} {F(left)} {F(top)} {F(left + arm)} {F(top)} {F(lr)} {F(lg)} {F(lb)} 1 {F(cornerStroke)} 0 0 0 0 0 0");
+                // Bottom-right L
+                cmds.Add($"POLY 3 {F(right - arm)} {F(bottom)} {F(right)} {F(bottom)} {F(right)} {F(bottom - arm)} 0 0 0 0.85 {F(cornerStroke + 3)} 0 0 0 0 0 0");
+                cmds.Add($"POLY 3 {F(right - arm)} {F(bottom)} {F(right)} {F(bottom)} {F(right)} {F(bottom - arm)} {F(lr)} {F(lg)} {F(lb)} 1 {F(cornerStroke)} 0 0 0 0 0 0");
+            }
 
             if (styles.Labels)
             {
-                string label = kind == 2 ? "核心" : kind == 1 ? "目标" : "可选";
-                double fontPx = Math.Clamp(cw * 0.095, 11, 18);
-                cmds.Add($"TEXT {F(fx + fw * 0.5)} {F(fy - fontPx * 0.75)} {F(fontPx)} 1 {F(cr)} {F(cg)} {F(cb)} 1 0.06 0.07 0.09 0.88 8 3 1 {label}");
+                string label = kind == 2 ? "★ 关键" : kind == 1 ? "★ 追踪" : "可抓";
+                double tagH = Math.Clamp(0.13 * cw, 18, 30);
+                double fontPx = Math.Clamp(0.08 * cw, 11, 18);
+                double padX = Math.Clamp(0.05 * cw, 6, 12);
+                double padY = 2.0;
+                double tagX = fx;
+                double tagY = fy - 4.0;
+                if (secondary)
+                {
+                    double borderW = Math.Max(1.2, 0.008 * cw);
+                    cmds.Add($"TAG {F(tagX)} {F(tagY)} {F(tagH)} {F(fontPx)} 0 {F(cr)} {F(cg)} {F(cb)} 1 {F(borderW)} 0.024 0.078 0.063 0.92 {F(padX)} {F(padY)} 2 {label}");
+                }
+                else
+                {
+                    cmds.Add($"TAG {F(tagX)} {F(tagY)} {F(tagH)} {F(fontPx)} 1 {F(Dark(cr))} {F(Dark(cg))} {F(Dark(cb))} 1 0 {F(cr)} {F(cg)} {F(cb)} 1 {F(padX)} {F(padY)} 2 {label}");
+                }
             }
         }
     }
@@ -425,20 +471,38 @@ internal sealed class LinuxOverlayController : IDisposable
                 if (segment.Count < 2) continue;
                 int n = Math.Min(segment.Count, 64);
                 var sbPts = new StringBuilder();
-                double firstX = 0, firstY = 0;
+                var pts = new (double X, double Y)[n];
                 for (int i = 0; i < n; i++)
                 {
                     var pt = segment[i];
                     var proj = routes.Projection.Project(pt.Col + 0.5 + shiftX, pt.Row + 0.5 + shiftY);
                     double px = proj.X * w, py = proj.Y * h;
-                    if (i == 0) { firstX = px; firstY = py; }
+                    pts[i] = (px, py);
                     if (i > 0) sbPts.Append(' ');
                     sbPts.Append(F(px)).Append(' ').Append(F(py));
                 }
                 // Dark outline + bright core
                 cmds.Add($"POLY {n} {sbPts} 0.08 0.04 0.04 0.78 {F(6.5 * k)} 0 0 0 0 0 0");
                 cmds.Add($"POLY {n} {sbPts} {F(cr)} {F(cg)} {F(cb)} 0.85 {F(3.2 * k)} {(isFly ? 1 : 0)} 0 0 0 0 0");
-                cmds.Add($"CIRCLE {F(firstX)} {F(firstY)} {F(5.5 * k)} 0.08 0.04 0.04 0.9 {F(2 * k)} {F(cr)} {F(cg)} {F(cb)} 0.95");
+                cmds.Add($"CIRCLE {F(pts[0].X)} {F(pts[0].Y)} {F(5.5 * k)} 0.08 0.04 0.04 0.9 {F(2 * k)} {F(cr)} {F(cg)} {F(cb)} 0.95");
+
+                // Directional arrowhead at segment end (and midpoint for longer routes)
+                int[] arrowEnds = n >= 4 ? [n / 2, n - 1] : [n - 1];
+                foreach (int idx in arrowEnds)
+                {
+                    double dx = pts[idx].X - pts[idx - 1].X;
+                    double dy = pts[idx].Y - pts[idx - 1].Y;
+                    double len = Math.Sqrt(dx * dx + dy * dy);
+                    if (len < 6 * k) continue;
+                    double ux = dx / len, uy = dy / len;
+                    double tipX = pts[idx].X, tipY = pts[idx].Y;
+                    double headL = 12 * k, headW = 6.5 * k;
+                    double lx = tipX - ux * headL - uy * headW;
+                    double ly = tipY - uy * headL + ux * headW;
+                    double rx = tipX - ux * headL + uy * headW;
+                    double ry = tipY - uy * headL - ux * headW;
+                    cmds.Add($"POLY 3 {F(tipX)} {F(tipY)} {F(lx)} {F(ly)} {F(rx)} {F(ry)} 0.08 0.04 0.04 0.9 {F(1.5 * k)} 0 {F(cr)} {F(cg)} {F(cb)} 0.95 1");
+                }
             }
         }
     }

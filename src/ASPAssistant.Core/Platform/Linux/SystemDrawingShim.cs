@@ -290,7 +290,7 @@ namespace System.Drawing
             BitConverter.TryWriteBytes(header[10..], 54);
             BitConverter.TryWriteBytes(header[14..], 40);
             BitConverter.TryWriteBytes(header[18..], w);
-            BitConverter.TryWriteBytes(header[22..], -h); // top-down DIB
+            BitConverter.TryWriteBytes(header[22..], h); // standard bottom-up DIB (matches Windows GDI+)
             BitConverter.TryWriteBytes(header[26..], (short)1);
             BitConverter.TryWriteBytes(header[28..], (short)bpp);
             BitConverter.TryWriteBytes(header[34..], pixelBytes);
@@ -299,7 +299,7 @@ namespace System.Drawing
             byte* srcBase = (byte*)bitmap.GetPixels().ToPointer();
             int srcRowBytes = bitmap.RowBytes;
             byte[] rowBuf = new byte[rowStride];
-            for (int y = 0; y < h; y++)
+            for (int y = h - 1; y >= 0; y--)
             {
                 byte* srcRow = srcBase + y * srcRowBytes;
                 if (bytesPerPixel == 4)

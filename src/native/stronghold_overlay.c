@@ -17,7 +17,8 @@ typedef enum {
     OP_RECT,
     OP_POLY,
     OP_CIRCLE,
-    OP_TEXT
+    OP_TEXT,
+    OP_TAG
 } op_kind_t;
 
 typedef struct {
@@ -188,6 +189,53 @@ static void on_draw(GtkDrawingArea *area, cairo_t *cr, int width, int height, gp
 
             pango_font_description_free(desc);
             g_object_unref(layout);
+        } else if (op->kind == OP_TAG && op->text[0]) {
+            /* Sharp corner badge sitting flush above (x, y) bottom-left anchor:
+               x = left edge, y = bottom edge; stroke_rgba = text/border color;
+               fill_rgba = background fill; stroke_w = inner colored border width (0 for solid);
+               dashed = outer black border width (typically 2). */
+            PangoLayout *layout = pango_cairo_create_layout(cr);
+            PangoFontDescription *desc = pango_font_description_new();
+            pango_font_description_set_family(desc, "Noto Sans CJK SC, Sans");
+            pango_font_description_set_absolute_size(desc, op->font_px * PANGO_SCALE);
+            pango_font_description_set_weight(desc, op->bold ? PANGO_WEIGHT_BOLD : PANGO_WEIGHT_SEMIBOLD);
+            pango_layout_set_font_description(layout, desc);
+            pango_layout_set_text(layout, op->text, -1);
+
+            int tw = 0, th = 0;
+            pango_layout_get_pixel_size(layout, &tw, &th);
+            double bw = tw + op->pad_x * 2.0;
+            double bh = fmax(op->h, th + op->pad_y * 2.0);
+            double bx = op->x;
+            double by = op->y - bh;
+
+            // Outer black contrast border (matches Windows BorderThickness=2, alpha=191/255)
+            double ob = op->dashed > 0 ? (double)op->dashed : 2.0;
+            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.78);
+            cairo_rectangle(cr, bx - ob, by - ob, bw + ob * 2.0, bh + ob * 2.0);
+            cairo_fill(cr);
+
+            // Tag background fill
+            cairo_set_source_rgba(cr, op->fill_r, op->fill_g, op->fill_b, op->fill_a);
+            cairo_rectangle(cr, bx, by, bw, bh);
+            cairo_fill(cr);
+
+            // Optional inner colored border (for secondary/pickable tag)
+            if (op->stroke_w > 0.01) {
+                cairo_set_source_rgba(cr, op->stroke_r, op->stroke_g, op->stroke_b, op->stroke_a);
+                cairo_set_line_width(cr, op->stroke_w);
+                cairo_rectangle(cr, bx + op->stroke_w * 0.5, by + op->stroke_w * 0.5,
+                    bw - op->stroke_w, bh - op->stroke_w);
+                cairo_stroke(cr);
+            }
+
+            // Text centered vertically inside tag
+            cairo_set_source_rgba(cr, op->stroke_r, op->stroke_g, op->stroke_b, op->stroke_a);
+            cairo_move_to(cr, bx + op->pad_x, by + (bh - th) * 0.5);
+            pango_cairo_show_layout(cr, layout);
+
+            pango_font_description_free(desc);
+            g_object_unref(layout);
         }
         cairo_restore(cr);
     }
@@ -220,6 +268,9 @@ static void handle_command(const char *line) {
             g_ov.vp_w = w;
             g_ov.vp_h = h;
             if (output_changed) {
+                if (gtk_widget_get_visible(GTK_WIDGET(g_ov.win))) {
+                    gtk_widget_set_visible(GTK_WIDGET(g_ov.win), FALSE);
+                }
                 snprintf(g_ov.current_output, sizeof(g_ov.current_output), "%s", out_name);
                 GdkMonitor *mon = find_monitor_by_connector(out_name);
                 if (mon) {
@@ -301,6 +352,17 @@ static void handle_command(const char *line) {
             &op->fill_r, &op->fill_g, &op->fill_b, &op->fill_a,
             &op->pad_x, &op->pad_y, &op->align_center, &consumed) >= 15 && consumed > 0) {
             snprintf(op->text, sizeof(op->text), "%s", line + 5 + consumed);
+            g_ov.pending_count++;
+        }
+    } else if (strncmp(line, "TAG ", 4) == 0) {
+        op->kind = OP_TAG;
+        int consumed = 0;
+        if (sscanf(line + 4, "%lf %lf %lf %lf %d %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %d %n",
+            &op->x, &op->y, &op->h, &op->font_px, &op->bold,
+            &op->stroke_r, &op->stroke_g, &op->stroke_b, &op->stroke_a, &op->stroke_w,
+            &op->fill_r, &op->fill_g, &op->fill_b, &op->fill_a,
+            &op->pad_x, &op->pad_y, &op->dashed, &consumed) >= 17 && consumed > 0) {
+            snprintf(op->text, sizeof(op->text), "%s", line + 4 + consumed);
             g_ov.pending_count++;
         }
     }
