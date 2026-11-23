@@ -59,6 +59,9 @@ public sealed class GameConnectionService : IDisposable
 
     public static IReadOnlyList<EmulatorDevice> DiscoverEmulatorDevices(bool useFallback = true)
     {
+#if LINUX_PORT
+        return [];
+#else
         using var found = MaaToolkit.Shared.AdbDevice.Find();
         var devices = found.Where(d => !d.Name.EndsWith("-LDPlayer", StringComparison.OrdinalIgnoreCase)
                 && d.Name.Contains("mumu", StringComparison.OrdinalIgnoreCase))
@@ -69,14 +72,19 @@ public sealed class GameConnectionService : IDisposable
                 "mumu")).ToArray();
         var mumu = useFallback ? MuMuFallback.UseIfMissing(devices, MuMuFallback.DiscoverDevices) : devices;
         return mumu.Concat(LdPlayerWindows.DiscoverDevices()).ToArray();
+#endif
     }
 
     public static IReadOnlyList<EmulatorWindow> FindEmulatorWindows()
     {
+#if LINUX_PORT
+        return [];
+#else
         using var windows = MaaToolkit.Shared.Desktop.Window.Find();
         return windows.Where(w => User32.IsWindowVisible(w.Handle)
                 && IsEmbeddedGameWindow(w.Handle))
             .Select(w => new EmulatorWindow(w.Handle, w.Name)).ToArray();
+#endif
     }
 
     private static bool IsEmbeddedGameWindow(IntPtr window)

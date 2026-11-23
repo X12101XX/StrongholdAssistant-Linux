@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>StrongholdAssistant</AssemblyName>
+    <TargetFramework>net8.0</TargetFramework>
+    <DefineConstants>$(DefineConstants);LINUX_PORT</DefineConstants>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>StrongholdAssistant.Host</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../ASPAssistant.Core/ASPAssistant.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Reuse cross-platform HostApi and host support files from StrongholdAssistant.Host -->
+  <ItemGroup>
+    <Compile Include="../StrongholdAssistant.Host/AssistantProfile.cs" Link="Shared/AssistantProfile.cs" />
+    <Compile Include="../StrongholdAssistant.Host/BridgeModels.cs" Link="Shared/BridgeModels.cs" />
+    <Compile Include="../StrongholdAssistant.Host/CollectionHudReader.cs" Link="Shared/CollectionHudReader.cs" />
+    <Compile Include="../StrongholdAssistant.Host/CollectionRounds.cs" Link="Shared/CollectionRounds.cs" />
+    <Compile Include="../StrongholdAssistant.Host/CollectionStore.cs" Link="Shared/CollectionStore.cs" />
+    <Compile Include="../StrongholdAssistant.Host/DiagnosticsStore.cs" Link="Shared/DiagnosticsStore.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.ActionState.cs" Link="Shared/HostApi.ActionState.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Adapt.cs" Link="Shared/HostApi.Adapt.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Backup.cs" Link="Shared/HostApi.Backup.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.BanGroups.cs" Link="Shared/HostApi.BanGroups.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.BoardRoutes.cs" Link="Shared/HostApi.BoardRoutes.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.BoardView.cs" Link="Shared/HostApi.BoardView.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Collection.cs" Link="Shared/HostApi.Collection.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Control.cs" Link="Shared/HostApi.Control.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.cs" Link="Shared/HostApi.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Diagnostics.cs" Link="Shared/HostApi.Diagnostics.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Economy.cs" Link="Shared/HostApi.Economy.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Field.cs" Link="Shared/HostApi.Field.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.History.cs" Link="Shared/HostApi.History.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.IncomeSharing.cs" Link="Shared/HostApi.IncomeSharing.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.LocalApi.cs" Link="Shared/HostApi.LocalApi.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.MatchReading.cs" Link="Shared/HostApi.MatchReading.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.MatchState.cs" Link="Shared/HostApi.MatchState.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Placement.cs" Link="Shared/HostApi.Placement.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Prototypes.cs" Link="Shared/HostApi.Prototypes.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Recognition.cs" Link="Shared/HostApi.Recognition.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Roster.cs" Link="Shared/HostApi.Roster.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.RoundEnemies.cs" Link="Shared/HostApi.RoundEnemies.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Shop.cs" Link="Shared/HostApi.Shop.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Strategy.cs" Link="Shared/HostApi.Strategy.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.StrategyAdvice.cs" Link="Shared/HostApi.StrategyAdvice.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Turn.cs" Link="Shared/HostApi.Turn.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.Update.cs" Link="Shared/HostApi.Update.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostSettingsStore.cs" Link="Shared/HostSettingsStore.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HotkeyParser.cs" Link="Shared/HotkeyParser.cs" />
+    <Compile Include="../StrongholdAssistant.Host/LocalHttpServer.cs" Link="Shared/LocalHttpServer.cs" />
+    <Compile Include="../StrongholdAssistant.Host/MarkerStyles.cs" Link="Shared/MarkerStyles.cs" />
+    <Compile Include="../StrongholdAssistant.Host/OverlayLayerSettings.cs" Link="Shared/OverlayLayerSettings.cs" />
+    <Compile Include="../StrongholdAssistant.Host/PlazaTokenStore.cs" Link="Shared/PlazaTokenStore.cs" />
+    <Compile Include="../StrongholdAssistant.Host/RoundJumpConfirmation.cs" Link="Shared/RoundJumpConfirmation.cs" />
+    <Compile Include="../StrongholdAssistant.Host/RouteOverlaySettings.cs" Link="Shared/RouteOverlaySettings.cs" />
+    <Compile Include="../StrongholdAssistant.Host/SklandGuideList.cs" Link="Shared/SklandGuideList.cs" />
+    <Compile Include="../StrongholdAssistant.Host/SklandParser.cs" Link="Shared/SklandParser.cs" />
+  </ItemGroup>
+
+  <!-- Bundle game data, built UI, and compiled Wayland/GTK native helpers -->
+  <ItemGroup>
+    <Content Include="../../data/**/*" Link="data/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../ui/dist/**/*" Link="ui/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../ui/dist/index.html')" />
+    <Content Remove="../ui/dist/assets/data/operators/Pith.webp" />
+    <Content Include="../../data/operator_icons/*.webp" Link="ui/assets/data/operators/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../data/skins/char_509_acast%231.webp;../../data/skins/char_616_pithst%231.webp;../../data/skins/char_616_pithst%232.webp" Link="ui/assets/data/skins/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../data/skills/skchr_acast_1.webp;../../data/skills/skchr_pithst_1.webp" Link="ui/assets/data/skills/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../data/modules/uniequip_002_pithst.webp" Link="ui/assets/data/modules/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../native/libstronghold_wayland.so" Link="libstronghold_wayland.so" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../native/libstronghold_wayland.so')" />
+    <Content Include="../native/stronghold-overlay" Link="stronghold-overlay" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../native/stronghold-overlay')" />
+    <Content Include="../native/stronghold-webview" Link="stronghold-webview" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../native/stronghold-webview')" />
+  </ItemGroup>
+</Project>

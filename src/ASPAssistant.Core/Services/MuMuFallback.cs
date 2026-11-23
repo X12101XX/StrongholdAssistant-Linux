@@ -33,6 +33,9 @@ public static class MuMuFallback
 
     public static EmulatorDevice? FindRunningAdb(string source)
     {
+#if LINUX_PORT
+        return null;
+#else
         foreach (var (name, kind) in new[] { ("MuMuNxMain", "mumu"), ("MuMuNxDevice", "mumu"),
             ("MuMuNxService", "mumu"), ("MuMuPlayer", "mumu"), ("dnplayer", "ldplayer") })
         {
@@ -63,6 +66,7 @@ public static class MuMuFallback
             }
         }
         return null;
+#endif
     }
 
     private static string? FindFile(string processPath, params string[] names)
@@ -92,6 +96,9 @@ public static class MuMuFallback
 
     public static IReadOnlyList<EmulatorDevice> DiscoverDevices()
     {
+#if LINUX_PORT
+        return [];
+#else
         lock (Gate)
         {
             if (Environment.TickCount64 < _discoverAfter) return _devices;
@@ -121,6 +128,7 @@ public static class MuMuFallback
             _devices = DiscoverAsync(installations, budget.Token).GetAwaiter().GetResult();
             return _devices;
         }
+#endif
     }
 
     private static async Task<IReadOnlyList<EmulatorDevice>> DiscoverAsync(

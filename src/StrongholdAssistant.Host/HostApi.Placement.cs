@@ -130,12 +130,14 @@ public sealed partial class HostApi
 
     private void PublishPlacement(PlacementResult? result, int generation, Action? published = null)
     {
+#if !LINUX_PORT
         // 消息桥会同步切到窗口线程；不能持有计算锁等待它，否则 placement() 可能互锁。
         if (DialogOwner?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
         {
             dispatcher.BeginInvoke(() => PublishPlacement(result, generation, published));
             return;
         }
+#endif
         lock (_placementGate)
         {
             if (generation != _placementGeneration) return;

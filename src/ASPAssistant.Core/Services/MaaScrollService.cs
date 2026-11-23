@@ -27,6 +27,12 @@ public sealed class MaaScrollService
         if (clientRect == null)
             return false;
 
+#if LINUX_PORT
+        int clicks = dy / 120;
+        if (clicks == 0 && dy != 0) clicks = dy > 0 ? 1 : -1;
+        Interop.User32.ScrollWindow(hwnd, clicks);
+        return true;
+#else
         int cx = clientRect.Value.Left + clientRect.Value.Width / 2;
         int cy = clientRect.Value.Top + clientRect.Value.Height / 2;
 
@@ -81,5 +87,6 @@ public sealed class MaaScrollService
             AppLogger.Warn("MaaScroll", $"Maa scroll failed: {ex.Message}");
             return false;
         }
+#endif
     }
 }

@@ -20,10 +20,14 @@ public sealed class PcWindowCapture : IDisposable
 
     public PcWindowCapture() : this(window =>
     {
+#if LINUX_PORT
+        throw new PlatformNotSupportedException("Linux uses native Wayland screencopy.");
+#else
         _ = Task.Run(CaptureBorderDiagnostic.Log);
         CrashGuard.WgcStarting();
         return new MaaWin32Controller(new DesktopWindowInfo(window, "", "", Win32ScreencapMethod.FramePool,
             Win32InputMethod.None, Win32InputMethod.None), LinkOption.None, CheckStatusOption.None);
+#endif
     }) { }
 
     internal PcWindowCapture(Func<nint, IMaaController> createController) => _createController = createController;
@@ -53,6 +57,18 @@ public sealed class PcWindowCapture : IDisposable
 
     public Bitmap? Capture(nint window, bool requireFresh = true)
     {
+#if LINUX_PORT
+        lock (_gate)
+        {
+            if (window == 0 || !User32.IsWindow(window) || User32.IsIconic(window))
+                return Fallback("窗口不存在或不在当前工作区");
+            var bitmap = LinuxPlatform.CaptureWindow(window, out var method);
+            if (bitmap is null) return Fallback("Wayland 截图失败");
+            Method = method;
+            LastFallbackReason = null;
+            return bitmap;
+        }
+#else
         lock (_gate)
         {
             if (_hideCaptureBorder) return null;
@@ -122,6 +138,7 @@ public sealed class PcWindowCapture : IDisposable
                 return Fallback($"窗口捕获失败：{ex.GetType().Name}");
             }
         }
+#endif
     }
 
     private Bitmap? Fallback(string reason)

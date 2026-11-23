@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using ASPAssistant.Core.Models;
+#if !LINUX_PORT
 using Microsoft.Win32;
+#endif
 
 namespace StrongholdAssistant.Host;
 
@@ -96,11 +98,21 @@ public sealed partial class HostApi
     private void OpenDataFolder()
     {
         Directory.CreateDirectory(DataDirectory);
+#if LINUX_PORT
+        ASPAssistant.Core.Interop.LinuxPlatform.OpenExternal(DataDirectory);
+#else
         Process.Start(new ProcessStartInfo(DataDirectory) { UseShellExecute = true });
+#endif
     }
 
     private async Task<string?> ExportDataAsync()
     {
+#if LINUX_PORT
+        var file = await LinuxDialogs.SaveFileAsync("导出备份", $"高效雅雅-备份-{DateTime.Now:yyyy-MM-dd}.json", "*.json");
+        if (string.IsNullOrEmpty(file)) return null;
+        await ExportBackupAsync(file);
+        return Path.GetFullPath(file);
+#else
         var dialog = new SaveFileDialog
         {
             FileName = $"高效雅雅-备份-{DateTime.Now:yyyy-MM-dd}.json",
@@ -110,11 +122,17 @@ public sealed partial class HostApi
         if (dialog.ShowDialog(DialogOwner) != true) return null;
         await ExportBackupAsync(dialog.FileName);
         return Path.GetFullPath(dialog.FileName);
+#endif
     }
 
     private async Task<BackupSelection?> PickBackupAsync()
     {
+#if LINUX_PORT
+        var file = await LinuxDialogs.OpenFileAsync("选择备份文件", "*.json");
+        return string.IsNullOrEmpty(file) ? null : await ReadBackupAsync(file);
+#else
         var dialog = new OpenFileDialog { Filter = "JSON (*.json)|*.json", DefaultExt = ".json" };
         return dialog.ShowDialog(DialogOwner) == true ? await ReadBackupAsync(dialog.FileName) : null;
+#endif
     }
 }

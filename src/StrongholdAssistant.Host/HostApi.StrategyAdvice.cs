@@ -65,8 +65,13 @@ public sealed partial class HostApi
             }
             Changed?.Invoke("match", match);
         }
+#if LINUX_PORT
+        Publish();
+        await Task.CompletedTask;
+#else
         if (System.Windows.Application.Current?.Dispatcher is { } dispatcher) await dispatcher.InvokeAsync(Publish);
         else Publish();
+#endif
     }
 
     internal StrategyAdvice BuildStrategyAdvice(MatchState state)

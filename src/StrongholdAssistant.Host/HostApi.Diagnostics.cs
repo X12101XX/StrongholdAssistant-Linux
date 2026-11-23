@@ -1,8 +1,10 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
+#if !LINUX_PORT
 using System.Windows.Interop;
-using ASPAssistant.Core.Interop;
 using Microsoft.Win32;
+#endif
+using ASPAssistant.Core.Interop;
 
 namespace StrongholdAssistant.Host;
 
@@ -22,6 +24,14 @@ public sealed partial class HostApi
 
     public async Task<string?> ExportDiagnosticsAsync()
     {
+#if LINUX_PORT
+        var file = await LinuxDialogs.SaveFileAsync("导出诊断包", $"高效雅雅-诊断-{DateTime.Now:yyyyMMdd-HHmmss}.zip", "*.zip");
+        if (string.IsNullOrEmpty(file)) return null;
+        var system = ReadDiagnosticSystem();
+        var boardFrame = GetDiagnosticBoardFrame();
+        await Task.Run(() => _diagnostics.Export(file, Settings, Connection, system, boardFrame));
+        return file;
+#else
         var dialog = new SaveFileDialog
         {
             Filter = "ZIP (*.zip)|*.zip", DefaultExt = ".zip",
@@ -33,10 +43,35 @@ public sealed partial class HostApi
         var boardFrame = GetDiagnosticBoardFrame();
         await Task.Run(() => _diagnostics.Export(dialog.FileName, Settings, Connection, system, boardFrame));
         return dialog.FileName;
+#endif
     }
 
     internal object ReadDiagnosticSystem()
     {
+#if LINUX_PORT
+        return new
+        {
+            version = typeof(HostApi).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "1.3.8-linux",
+            os = RuntimeInformation.OSDescription,
+            waylandDisplay = Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"),
+            niriSocket = NiriIpc.IsAvailable,
+            detectedTheme = _detectedTheme,
+            configuredTheme = Settings.GameTheme,
+            monitors = NiriIpc.GetOutputs().Values.ToArray(),
+            roundEnemyPanel = EnemyPanelStats,
+            capture = ReadLinuxDiagnosticCapture?.Invoke(),
+            gameWindows = User32.EnumerateArknightsWindows().Select(window => new
+            {
+                handle = window.Handle.ToInt64(),
+                className = User32.GetWindowClass(window.Handle),
+                title = User32.GetWindowTitle(window.Handle),
+                visible = window.Visible,
+                minimized = User32.IsIconic(window.Handle),
+                clientWidth = window.ClientWidth,
+                clientHeight = window.ClientHeight
+            }).ToArray()
+        };
+#else
         var hwnd = DialogOwner is null ? nint.Zero : new WindowInteropHelper(DialogOwner).Handle;
         return new
         {
@@ -62,6 +97,7 @@ public sealed partial class HostApi
                 processName = ReadWindowProcessName(window.Handle)
             }).ToArray()
         };
+#endif
     }
 
     private static string? ReadWindowProcessName(nint hwnd)
@@ -81,6 +117,7 @@ public sealed partial class HostApi
     }
 }
 
+#if !LINUX_PORT
 internal static class DiagnosticMonitors
 {
     private delegate bool MonitorCallback(nint monitor, nint dc, ref RECT rect, nint data);
@@ -102,3 +139,4 @@ internal static class DiagnosticMonitors
         return monitors.ToArray();
     }
 }
+#endif

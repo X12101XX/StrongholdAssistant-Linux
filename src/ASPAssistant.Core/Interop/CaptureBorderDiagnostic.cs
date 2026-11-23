@@ -4,6 +4,11 @@ namespace ASPAssistant.Core.Interop;
 
 internal static class CaptureBorderDiagnostic
 {
+#if LINUX_PORT
+    internal static void Log() => AppLogger.Info("ScreenCapture",
+        $"Linux Wayland/niri capture ready (NIRI_SOCKET={NiriIpc.IsAvailable})");
+    internal static string Read(Func<string> requestAccess) => "LinuxWayland";
+#else
     internal static void Log() => AppLogger.Info("ScreenCapture", Read(RequestBorderlessAccess));
 
     internal static string Read(Func<string> requestAccess)
@@ -106,4 +111,5 @@ internal static class CaptureBorderDiagnostic
         public Task Task => _completed.Task;
         public void Invoke(nint operation, int status) => _completed.TrySetResult();
     }
+#endif
 }

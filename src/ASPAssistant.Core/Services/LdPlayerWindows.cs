@@ -59,6 +59,9 @@ public static class LdPlayerWindows
 
     public static IReadOnlyList<EmulatorDevice> DiscoverDevices()
     {
+#if LINUX_PORT
+        return [];
+#else
         var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var process in Process.GetProcessesByName("dnplayer"))
         {
@@ -96,5 +99,6 @@ public static class LdPlayerWindows
             }
         }
         return devices;
+#endif
     }
 }

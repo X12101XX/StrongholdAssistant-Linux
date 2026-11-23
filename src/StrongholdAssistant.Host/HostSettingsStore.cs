@@ -158,14 +158,30 @@ public sealed class HostSettingsStore(string path)
         });
     }
 
-    /// <summary>加密凭据（DPAPI 当前用户）；解不开就当作没填，不让设置读失败。</summary>
+    /// <summary>加密凭据（Windows 用 DPAPI，Linux 用本机密钥 AES-GCM）；解不开就当作没填，不让设置读失败。</summary>
     private static string ProtectSecret(string value)
+#if LINUX_PORT
+        => "linux:" + Convert.ToBase64String(LinuxSecretBox.Protect(Encoding.UTF8.GetBytes(value)));
+#else
         => "dpapi:" + Convert.ToBase64String(ProtectedData.Protect(
             Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser));
+#endif
 
     private static string UnprotectSecret(string? stored)
     {
         if (string.IsNullOrEmpty(stored)) return "";
+#if LINUX_PORT
+        if (!stored.StartsWith("linux:", StringComparison.Ordinal))
+            return stored.StartsWith("dpapi:", StringComparison.Ordinal) ? "" : stored;
+        try
+        {
+            return Encoding.UTF8.GetString(LinuxSecretBox.Unprotect(Convert.FromBase64String(stored["linux:".Length..])));
+        }
+        catch (Exception ex) when (ex is CryptographicException or FormatException or ArgumentException)
+        {
+            return "";
+        }
+#else
         if (!stored.StartsWith("dpapi:", StringComparison.Ordinal)) return stored; // 手改过的旧文件按原文读
         try
         {
@@ -176,6 +192,7 @@ public sealed class HostSettingsStore(string path)
         {
             return "";
         }
+#endif
     }
     private static bool ValidAccent(string? accent) => accent is not null && (accent == ""
         || System.Text.RegularExpressions.Regex.IsMatch(accent, @"\A#[0-9a-fA-F]{6}\z"));

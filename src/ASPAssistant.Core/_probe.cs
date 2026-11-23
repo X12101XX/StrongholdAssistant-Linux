@@ -1,3 +1,4 @@
+#if !LINUX_PORT
 using MaaFramework.Binding;
 public static class T {
   public static void M() {
@@ -12,3 +13,4 @@ public static class T {
     c.Scroll(0, -120);
   }
 }
+#endif

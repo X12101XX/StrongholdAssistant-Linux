@@ -9,7 +9,11 @@ public sealed class PlazaTokenStore(string userDirectory)
 
     public void Save(string token)
     {
+#if LINUX_PORT
+        var encrypted = LinuxSecretBox.Protect(Encoding.UTF8.GetBytes(token));
+#else
         var encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(token), null, DataProtectionScope.CurrentUser);
+#endif
         Directory.CreateDirectory(userDirectory);
         File.WriteAllBytes(_path, encrypted);
     }
@@ -19,7 +23,11 @@ public sealed class PlazaTokenStore(string userDirectory)
         if (!File.Exists(_path)) return null;
         try
         {
+#if LINUX_PORT
+            return Encoding.UTF8.GetString(LinuxSecretBox.Unprotect(File.ReadAllBytes(_path)));
+#else
             return Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(_path), null, DataProtectionScope.CurrentUser));
+#endif
         }
         catch (CryptographicException) { return null; }
     }

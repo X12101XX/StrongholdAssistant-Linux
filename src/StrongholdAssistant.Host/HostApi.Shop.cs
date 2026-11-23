@@ -179,7 +179,11 @@ public sealed partial class HostApi
             || !(url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
                 || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException("只能打开网页链接。");
+#if LINUX_PORT
+        ASPAssistant.Core.Interop.LinuxPlatform.OpenExternal(url);
+#else
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+#endif
     }
 
     public void SaveRunAsAdmin(bool on)

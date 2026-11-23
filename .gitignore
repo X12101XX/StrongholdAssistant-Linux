@@ -16,3 +16,9 @@ src/ui/dev/samples/
 # 玩家自愿采集的对局数据
 collect/
 __pycache__/
+
+# Linux native build outputs
+src/native/gen/
+src/native/libstronghold_wayland.so
+src/native/stronghold-overlay
+src/native/stronghold-webview

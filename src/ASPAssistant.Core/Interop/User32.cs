@@ -23,6 +23,222 @@ public struct RECT
 
 public static class User32
 {
+#if LINUX_PORT
+    public static string GetWindowClass(IntPtr hwnd)
+        => NiriIpc.GetWindows().FirstOrDefault(w => (IntPtr)w.Id == hwnd)?.AppId ?? "";
+
+    public static int DwmFlush() { Thread.Sleep(16); return 0; }
+
+    public static uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId)
+    {
+        var pid = NiriIpc.GetWindows().FirstOrDefault(w => (IntPtr)w.Id == hwnd)?.Pid ?? 0;
+        processId = (uint)Math.Max(0, pid);
+        return processId;
+    }
+
+    public static bool IsWindowVisible(IntPtr hwnd)
+        => hwnd != IntPtr.Zero && NiriIpc.GetWindows().Any(w => (IntPtr)w.Id == hwnd);
+
+    public static IntPtr GetAncestor(IntPtr hwnd, uint flags) => hwnd;
+
+    public static IntPtr WindowFromPoint(POINT point) => GetForegroundWindow();
+
+    public static string GetWindowTitle(IntPtr hwnd)
+        => NiriIpc.GetWindows().FirstOrDefault(w => (IntPtr)w.Id == hwnd)?.Title ?? "";
+
+    public static IntPtr FindChildWindow(IntPtr parent, string title) => IntPtr.Zero;
+
+    public static IntPtr FindWindow(string? lpClassName, string lpWindowName)
+    {
+        var match = NiriIpc.GetWindows().FirstOrDefault(w =>
+            w.Title == lpWindowName || (!string.IsNullOrEmpty(lpClassName) && w.AppId.Equals(lpClassName, StringComparison.OrdinalIgnoreCase)));
+        return match is null ? IntPtr.Zero : (IntPtr)match.Id;
+    }
+
+    public static bool GetWindowRect(IntPtr hWnd, out RECT lpRect)
+    {
+        var geom = NiriIpc.GetWindowGeometry((ulong)hWnd);
+        if (geom is null) { lpRect = default; return false; }
+        lpRect = geom.PhysicalRect;
+        return true;
+    }
+
+    public static uint GetDpiForWindow(IntPtr hWnd)
+    {
+        var geom = NiriIpc.GetWindowGeometry((ulong)hWnd);
+        if (geom is null) return 0;
+        return (uint)Math.Max(96, Math.Round(96.0 * (geom.Output.Scale > 0 ? geom.Output.Scale : 1.0)));
+    }
+
+    public static IntPtr GetWindowDpiAwarenessContext(IntPtr hwnd) => new(-4);
+    public static IntPtr GetDpiAwarenessContextForProcess(IntPtr process) => new(-4);
+    public static bool AreDpiAwarenessContextsEqual(IntPtr first, IntPtr second) => first == second;
+    public static string DescribeDpiAwareness(IntPtr context) => "WaylandPerOutputScale";
+
+    public static RECT ReadWindowRect(IntPtr hwnd)
+        => GetWindowRect(hwnd, out var rect) ? rect : default;
+
+    public static double GetWindowDpiScale(IntPtr hwnd)
+    {
+        var geom = NiriIpc.GetWindowGeometry((ulong)hwnd);
+        return geom is { Output.Scale: > 0 } ? geom.Output.Scale : 1.0;
+    }
+
+    public static void RaiseTopmost(IntPtr hwnd) { }
+    public static void SetWindowBounds(IntPtr hwnd, RECT bounds) { }
+
+    public static bool GetClientRect(IntPtr hWnd, out RECT lpRect)
+    {
+        var geom = NiriIpc.GetWindowGeometry((ulong)hWnd);
+        if (geom is null) { lpRect = default; return false; }
+        lpRect = new RECT { Left = 0, Top = 0, Right = geom.PhysicalRect.Width, Bottom = geom.PhysicalRect.Height };
+        return true;
+    }
+
+    public static IntPtr GetForegroundWindow() => (IntPtr)NiriIpc.GetFocusedWindowId();
+
+    public static bool SetForegroundWindow(IntPtr hWnd) => NiriIpc.FocusWindow((ulong)hWnd);
+
+    public static bool IsWindow(IntPtr hWnd)
+        => hWnd != IntPtr.Zero && NiriIpc.GetWindows().Any(w => (IntPtr)w.Id == hWnd);
+
+    public static bool IsIconic(IntPtr hWnd)
+    {
+        var geom = NiriIpc.GetWindowGeometry((ulong)hWnd);
+        return geom is null || !geom.OnActiveWorkspace;
+    }
+
+    public static bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags) => false;
+    public const uint PW_RENDERFULLCONTENT = 2;
+
+    public static int GetWindowLong(IntPtr hWnd, int nIndex) => 0;
+    public static int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong) => 0;
+
+    public static bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint)
+    {
+        var geom = NiriIpc.GetWindowGeometry((ulong)hWnd);
+        if (geom is null) return false;
+        lpPoint.X += geom.PhysicalRect.Left;
+        lpPoint.Y += geom.PhysicalRect.Top;
+        return true;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_TRANSPARENT = 0x00000020;
+    public const int WS_EX_LAYERED = 0x00080000;
+    public const int WS_EX_TOOLWINDOW = 0x00000080;
+    public const int WS_EX_NOACTIVATE = 0x08000000;
+
+    public static IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam) => IntPtr.Zero;
+    public static bool GetCursorPos(out POINT lpPoint) => LinuxPlatform.GetCursorPos(out lpPoint);
+    public const uint WM_MOUSEWHEEL = 0x020A;
+    public static bool SetCursorPos(int x, int y) => LinuxPlatform.SetCursorPos(x, y);
+
+    public const uint MOUSEEVENTF_MOVE = 0x0001, MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004;
+    public static void SendScanKey(uint key, bool up) => LinuxPlatform.SendScanKey(key, up);
+    public static void SendMouse(uint flags, int dx = 0, int dy = 0) => LinuxPlatform.SendMouse(flags, dx, dy);
+
+    public static IntPtr FindArknightsWindow() => SelectArknightsWindow(EnumerateArknightsWindows());
+
+    public static IReadOnlyList<GameWindowCandidate> EnumerateArknightsWindows()
+    {
+        var candidates = new List<(GameWindowCandidate Candidate, bool Focused, bool OnActive)>();
+        foreach (var w in NiriIpc.GetWindows())
+        {
+            if (!NiriIpc.IsArknightsWindow(w)) continue;
+            var geom = NiriIpc.GetWindowGeometry(w.Id);
+            int width = geom?.PhysicalRect.Width ?? w.WindowWidth;
+            int height = geom?.PhysicalRect.Height ?? w.WindowHeight;
+            candidates.Add((
+                new GameWindowCandidate((IntPtr)w.Id, true, Math.Max(1, width), Math.Max(1, height)),
+                w.IsFocused,
+                geom?.OnActiveWorkspace ?? false));
+        }
+        return candidates
+            .OrderByDescending(x => x.Focused)
+            .ThenByDescending(x => x.OnActive)
+            .ThenByDescending(x => (long)x.Candidate.ClientWidth * x.Candidate.ClientHeight)
+            .Select(x => x.Candidate)
+            .ToList();
+    }
+
+    public static IntPtr SelectArknightsWindow(IEnumerable<GameWindowCandidate> candidates)
+    {
+#if LINUX_PORT
+        return candidates.Where(window => window.Visible).FirstOrDefault()?.Handle ?? IntPtr.Zero;
+#else
+        return candidates.Where(window => window.Visible)
+            .OrderByDescending(window => (long)window.ClientWidth * window.ClientHeight)
+            .FirstOrDefault()?.Handle ?? IntPtr.Zero;
+#endif
+    }
+
+    public static RECT? GetClientRectScreen(IntPtr hWnd)
+        => NiriIpc.GetWindowGeometry((ulong)hWnd)?.PhysicalRect;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    public static bool IntersectsMonitor(RECT rect)
+    {
+        foreach (var o in NiriIpc.GetOutputs().Values)
+        {
+            int ox = (int)Math.Round(o.LogicalX * o.Scale);
+            int oy = (int)Math.Round(o.LogicalY * o.Scale);
+            if (rect.Left < ox + o.PhysicalWidth && rect.Right > ox && rect.Top < oy + o.PhysicalHeight && rect.Bottom > oy)
+                return true;
+        }
+        return false;
+    }
+
+    public static bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk) => false;
+    public static bool UnregisterHotKey(IntPtr hWnd, int id) => false;
+
+    public const uint MOD_CONTROL = 0x0002;
+    public const uint MOD_SHIFT   = 0x0004;
+    public const uint VK_OEM_2    = 0xBF;
+    public const int  WM_HOTKEY   = 0x0312;
+    public const int WM_ENTERSIZEMOVE = 0x0231;
+    public const int WM_EXITSIZEMOVE = 0x0232;
+
+    public static void ScrollWindow(IntPtr hwnd, int clicks) => LinuxPlatform.ScrollWindow(hwnd, clicks);
+
+    public static RECT GetMonitorRect(int x, int y) => GetMonitorGeometry(x, y).Bounds;
+
+    public static (RECT Bounds, RECT WorkArea) GetMonitorGeometry(int x, int y)
+    {
+        var outputs = NiriIpc.GetOutputs().Values;
+        var match = outputs.FirstOrDefault(o =>
+        {
+            int ox = (int)Math.Round(o.LogicalX * o.Scale);
+            int oy = (int)Math.Round(o.LogicalY * o.Scale);
+            return x >= ox && x < ox + o.PhysicalWidth && y >= oy && y < oy + o.PhysicalHeight;
+        }) ?? outputs.FirstOrDefault();
+
+        if (match is null)
+        {
+            var fallback = new RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 };
+            return (fallback, fallback);
+        }
+        int left = (int)Math.Round(match.LogicalX * match.Scale);
+        int top = (int)Math.Round(match.LogicalY * match.Scale);
+        var bounds = new RECT { Left = left, Top = top, Right = left + match.PhysicalWidth, Bottom = top + match.PhysicalHeight };
+        return (bounds, bounds);
+    }
+#else
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetClassName(IntPtr hwnd, StringBuilder text, int count);
 
@@ -249,9 +465,15 @@ public static class User32
     }
 
     public static IntPtr SelectArknightsWindow(IEnumerable<GameWindowCandidate> candidates)
-        => candidates.Where(window => window.Visible)
+    {
+#if LINUX_PORT
+        return candidates.Where(window => window.Visible).FirstOrDefault()?.Handle ?? IntPtr.Zero;
+#else
+        return candidates.Where(window => window.Visible)
             .OrderByDescending(window => (long)window.ClientWidth * window.ClientHeight)
             .FirstOrDefault()?.Handle ?? IntPtr.Zero;
+#endif
+    }
 
     public static RECT? GetClientRectScreen(IntPtr hWnd)
     {
@@ -351,4 +573,5 @@ public static class User32
             throw new Win32Exception(Marshal.GetLastWin32Error());
         return (info.rcMonitor, info.rcWork);
     }
+#endif
 }

@@ -93,9 +93,13 @@ public sealed partial class HostApi
             token.ThrowIfCancellationRequested();
             return RouteLocalAsync(method, uri, body, token, RunActions);
         }
+#if LINUX_PORT
+        return Route();
+#else
         return DialogOwner?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess()
             ? dispatcher.InvokeAsync(Route, System.Windows.Threading.DispatcherPriority.Normal, token).Task.Unwrap()
             : Route();
+#endif
     }
 
     internal async Task<object?> RouteLocalAsync(string method, Uri uri, byte[] body, CancellationToken token,

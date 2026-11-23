@@ -5,7 +5,9 @@ using System.Reflection;
 using System.Security.Cryptography;
 using ASPAssistant.Core.Models;
 using ASPAssistant.Core.Services;
+#if !LINUX_PORT
 using Microsoft.Win32;
+#endif
 
 namespace StrongholdAssistant.Host;
 
@@ -129,7 +131,26 @@ public sealed partial class HostApi
         public string? Cpu => CollectionCpu.Value;
     }
     private static readonly Lazy<string?> CollectionCpu = new(() =>
+#if LINUX_PORT
+        ReadLinuxCpuModel());
+
+    private static string? ReadLinuxCpuModel()
+    {
+        try
+        {
+            foreach (var line in File.ReadLines("/proc/cpuinfo"))
+                if (line.StartsWith("model name", StringComparison.OrdinalIgnoreCase))
+                {
+                    int colon = line.IndexOf(':');
+                    if (colon >= 0) return line[(colon + 1)..].Trim();
+                }
+        }
+        catch { }
+        return null;
+    }
+#else
         Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString", null) as string);
+#endif
 
     private void CollectComparison(FieldSpritePatch patch, SpriteCandidate[] templates, SpriteCandidate[] fused, float[]? logits)
     {
@@ -305,6 +326,12 @@ public sealed partial class HostApi
     public async Task<string?> ExportCollectionAsync(string id)
     {
         var match = (await CollectionsAsync()).Single(m => m.Id == id);
+#if LINUX_PORT
+        var file = await LinuxDialogs.SaveFileAsync("导出采集包", $"高效雅雅-采集-{DateTimeOffset.Parse(match.StartedAt).LocalDateTime:yyyyMMdd-HHmm}.zip", "*.zip");
+        if (string.IsNullOrEmpty(file)) return null;
+        await ExportCollectionToAsync(id, file);
+        return file;
+#else
         var dialog = new SaveFileDialog
         {
             Filter = "ZIP (*.zip)|*.zip", DefaultExt = ".zip",
@@ -314,5 +341,6 @@ public sealed partial class HostApi
         if (dialog.ShowDialog(DialogOwner) != true) return null;
         await ExportCollectionToAsync(id, dialog.FileName);
         return dialog.FileName;
+#endif
     }
 }

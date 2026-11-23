@@ -13,7 +13,9 @@ public sealed partial class HostApi
     private readonly string _sessionPath;
     private readonly SemaphoreSlim _sessionGate = new(1, 1);
     public string DataDirectory { get; }
+#if !LINUX_PORT
     public System.Windows.Window? DialogOwner { get; set; }
+#endif
     private readonly LineupStore _lineups;
     private readonly Dictionary<string, string> _ids;
     private readonly Dictionary<string, string> _names;
@@ -439,6 +441,9 @@ public sealed partial class HostApi
     {
         if (text is null || text.Length > 2000)
             throw new ArgumentException("复制文字无效或超过 2000 字。");
+#if LINUX_PORT
+        ASPAssistant.Core.Interop.LinuxPlatform.CopyToClipboard(text);
+#else
         var dispatcher = DialogOwner?.Dispatcher ?? System.Windows.Application.Current?.Dispatcher
             ?? System.Windows.Threading.Dispatcher.CurrentDispatcher;
         dispatcher.Invoke(() =>
@@ -449,6 +454,7 @@ public sealed partial class HostApi
                 throw new ArgumentException("剪贴板被其他程序占用，稍后再试。");
             }
         });
+#endif
     }
 
     private void ValidateEquipment(string[] names)
