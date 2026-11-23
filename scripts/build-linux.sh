@@ -15,6 +15,6 @@ fi
 npm --prefix "$ROOT/src/ui" run build
 
 echo "==> 3/3 Building StrongholdAssistant.Linux (.NET 8)..."
-dotnet build "$ROOT/src/StrongholdAssistant.Linux/StrongholdAssistant.Linux.csproj" -c Release
+dotnet build "$ROOT/src/StrongholdAssistant.Linux/StrongholdAssistant.Linux.csproj" -c Release -p:ReleaseBuild=true
 
 echo "Done! Launch with: $ROOT/scripts/run-linux.sh"

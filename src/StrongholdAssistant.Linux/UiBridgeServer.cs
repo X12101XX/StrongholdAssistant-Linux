@@ -15,6 +15,10 @@ namespace StrongholdAssistant.Host;
 internal sealed class UiBridgeServer : IDisposable
 {
     private readonly HttpListener _listener = new();
+    private readonly HttpClient _plazaHttp = new(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All })
+    {
+        Timeout = TimeSpan.FromSeconds(30)
+    };
     private readonly string _uiRoot;
     private readonly string _controlDir;
     private readonly Func<string, Task<string>> _handleMessage;
@@ -71,6 +75,20 @@ internal sealed class UiBridgeServer : IDisposable
     removeEventListener(type, cb) {
       if (type === 'message') listeners.delete(cb);
     }
+  };
+  // Route Plaza API requests through local reverse proxy to preserve Origin: https://app.local
+  const PLAZA_ORIGIN = 'https://sa.lubeiluchen.com';
+  const origFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    try {
+      const url = typeof input === 'string' ? input : (input instanceof URL ? input.href : input && input.url);
+      if (url && url.startsWith(PLAZA_ORIGIN + '/')) {
+        const proxied = '/_plaza' + url.slice(PLAZA_ORIGIN.length);
+        if (typeof input === 'string' || input instanceof URL) return origFetch(proxied, init);
+        return origFetch(new Request(proxied, input), init);
+      }
+    } catch {}
+    return origFetch(input, init);
   };
 })();
 </script>
@@ -157,7 +175,64 @@ internal sealed class UiBridgeServer : IDisposable
             await HandleWebSocketAsync(ctx, ct).ConfigureAwait(false);
             return;
         }
+        if (path.StartsWith("/_plaza/", StringComparison.Ordinal))
+        {
+            await HandlePlazaProxyAsync(ctx, ct).ConfigureAwait(false);
+            return;
+        }
         await ServeStaticAsync(ctx, path, ct).ConfigureAwait(false);
+    }
+
+    private async Task HandlePlazaProxyAsync(HttpListenerContext ctx, CancellationToken ct)
+    {
+        try
+        {
+            var rawPathAndQuery = ctx.Request.RawUrl ?? "/";
+            var targetSuffix = rawPathAndQuery["/_plaza".Length..];
+            var targetUrl = "https://sa.lubeiluchen.com" + targetSuffix;
+
+            using var req = new HttpRequestMessage(new HttpMethod(ctx.Request.HttpMethod), targetUrl);
+            req.Headers.TryAddWithoutValidation("Origin", "https://app.local");
+            req.Headers.TryAddWithoutValidation("Referer", "https://app.local/");
+            if (ctx.Request.Headers["Authorization"] is { Length: > 0 } auth)
+                req.Headers.TryAddWithoutValidation("Authorization", auth);
+            if (ctx.Request.Headers["Accept"] is { Length: > 0 } accept)
+                req.Headers.TryAddWithoutValidation("Accept", accept);
+
+            if (ctx.Request.HasEntityBody)
+            {
+                using var ms = new MemoryStream();
+                await ctx.Request.InputStream.CopyToAsync(ms, ct).ConfigureAwait(false);
+                var content = new ByteArrayContent(ms.ToArray());
+                if (!string.IsNullOrEmpty(ctx.Request.ContentType))
+                    content.Headers.TryAddWithoutValidation("Content-Type", ctx.Request.ContentType);
+                req.Content = content;
+            }
+
+            using var resp = await _plazaHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            ctx.Response.StatusCode = (int)resp.StatusCode;
+            if (resp.Content.Headers.ContentType is { } ctHeader)
+                ctx.Response.ContentType = ctHeader.ToString();
+            var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+            ctx.Response.ContentLength64 = bytes.Length;
+            if (bytes.Length > 0)
+                await ctx.Response.OutputStream.WriteAsync(bytes, ct).ConfigureAwait(false);
+            ctx.Response.OutputStream.Close();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn("PlazaProxy", $"Forward failed: {ex.Message}");
+            try
+            {
+                ctx.Response.StatusCode = 502;
+                var err = Encoding.UTF8.GetBytes("{\"error\":\"proxy_error\",\"message\":\"连不上阵容广场\"}");
+                ctx.Response.ContentType = "application/json; charset=utf-8";
+                ctx.Response.ContentLength64 = err.Length;
+                await ctx.Response.OutputStream.WriteAsync(err, ct).ConfigureAwait(false);
+                ctx.Response.OutputStream.Close();
+            }
+            catch { }
+        }
     }
 
     private async Task HandleWebSocketAsync(HttpListenerContext ctx, CancellationToken ct)
@@ -287,6 +362,7 @@ internal sealed class UiBridgeServer : IDisposable
             try { c.Socket.Dispose(); } catch { }
         }
         _clients.Clear();
+        _plazaHttp.Dispose();
         _stop.Dispose();
     }
 }
