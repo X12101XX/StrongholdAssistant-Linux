@@ -1,0 +1,320 @@
+{
+  "band_amiya": {
+    "name": "众志合一",
+    "status": "simulated",
+    "kind": "activeCovenants",
+    "thresholds": [
+      3,
+      4,
+      5
+    ],
+    "bonuses": [
+      0.2,
+      0.3,
+      0.4
+    ]
+  },
+  "band_sarkazb": {
+    "name": "坚不可摧",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_emperor": {
+    "name": "加急调派",
+    "status": "unsupported",
+    "reason": "缺少干员再部署时间模型"
+  },
+  "band_qalaisa": {
+    "name": "食腐之蝶",
+    "status": "unsupported",
+    "reason": "缺少队友击倒后全队累计增益事件"
+  },
+  "band_ioleta": {
+    "name": "统御号令",
+    "status": "simulated",
+    "kind": "eliteCount",
+    "perElite": 0.1
+  },
+  "band_survive": {
+    "name": "意志鼓舞",
+    "status": "unsupported",
+    "reason": "输入未提供使用目标和额外复活次数"
+  },
+  "band_price": {
+    "name": "内部货源",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_transfer": {
+    "name": "纸片替身",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_dance": {
+    "name": "溃心领域",
+    "status": "unsupported",
+    "reason": "输入未提供策略目标地块"
+  },
+  "band_copy": {
+    "name": "幻画为真",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_jenga": {
+    "name": "条文修正",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_evolve": {
+    "name": "全场聚焦",
+    "status": "unsupported",
+    "reason": "输入未提供临时精锐目标"
+  },
+  "band_jesica": {
+    "name": "集结指示",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_takecare": {
+    "name": "重点监护",
+    "status": "unsupported",
+    "reason": "输入未提供调度中心等级及随机叠层目标"
+  },
+  "band_shield": {
+    "name": "药枚实验",
+    "status": "unsupported",
+    "reason": "输入未提供使用目标，缺少攻击触发友方护盾模型"
+  },
+  "band_smith": {
+    "name": "全力熔铸",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_weakness": {
+    "name": "以己之长",
+    "status": "simulated",
+    "kind": "weakness",
+    "eliteAtk": 0.16,
+    "eliteAspd": 16
+  },
+  "band_lmlee": {
+    "name": "得闲饮茶",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_fang": {
+    "name": "协力共进",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_amedic": {
+    "name": "外勤医疗",
+    "status": "unsupported",
+    "reason": "缺少策略额外医疗单位的生成位置与替换机制"
+  },
+  "band_mech": {
+    "name": "暴躁铁皮",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_treasure": {
+    "name": "宝藏探机",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_upgrade": {
+    "name": "至纯凝结",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_breakaway": {
+    "name": "消解空间",
+    "status": "unsupported",
+    "reason": "输入未提供使用目标，缺少首伤替换机制"
+  },
+  "band_damaztic": {
+    "name": "变形同构",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_fund": {
+    "name": "私募基金",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_gain": {
+    "name": "御守之力",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_prepfin": {
+    "name": "强制休整",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_mess": {
+    "name": "不稳定要素",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_protect": {
+    "name": "献身护卫",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_random": {
+    "name": "好多委托！",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_cannot": {
+    "name": "利滚利",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_ducklord": {
+    "name": "“神秘顾客”",
+    "status": "unsupported",
+    "reason": "缺少替换敌人的抽样概率"
+  },
+  "band_rich": {
+    "name": "最佳品味",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_substitute": {
+    "name": "替身娃娃",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_sell": {
+    "name": "东之极道",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_support": {
+    "name": "人才锁定",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_high": {
+    "name": "专享情报",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_equipment": {
+    "name": "精巧设计",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_pudd": {
+    "name": "电气化！",
+    "status": "unsupported",
+    "reason": "输入未提供被销毁并临时分发的装备"
+  },
+  "band_closeout": {
+    "name": "打包速递",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_pith": {
+    "name": "优等生",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_limit": {
+    "name": "正直教官",
+    "status": "unsupported",
+    "reason": "输入未提供叠层上限增益目标"
+  },
+  "band_bonus": {
+    "name": "二重奏",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_yan2": {
+    "name": "黑白相易",
+    "status": "unsupported",
+    "reason": "缺少炎佑召唤及属性收集模型"
+  },
+  "band_yan": {
+    "name": "广交豪杰",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_sargon": {
+    "name": "沙洲梦魇",
+    "status": "unsupported",
+    "reason": "描述未给出技能开启后的增益量与上限"
+  },
+  "band_pepe": {
+    "name": "博学多通",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_victoria": {
+    "name": "自发制造",
+    "status": "unsupported",
+    "reason": "缺少装备共享窗口和装备效果复制模型"
+  },
+  "band_harold": {
+    "name": "人才盲盒",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_egir": {
+    "name": "猎人战法",
+    "status": "unsupported",
+    "reason": "缺少被击倒后从整备区按次序替换部署的模型"
+  },
+  "band_clementia": {
+    "name": "崇高牺牲",
+    "status": "unsupported",
+    "reason": "缺少策略击倒叠层事件"
+  },
+  "band_kazimier": {
+    "name": "骑士团长",
+    "status": "unsupported",
+    "reason": "描述未给出真实伤害倍率及晕眩时长"
+  },
+  "band_mlynar": {
+    "name": "业务指标",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_kjerag2": {
+    "name": "不融信念",
+    "status": "unsupported",
+    "reason": "缺少寒冷叠加冻结模型"
+  },
+  "band_kjerag": {
+    "name": "雪域礼赠",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_siracusa": {
+    "name": "量体裁衣",
+    "status": "unsupported",
+    "reason": "缺少隐匿、恐惧及其触发概率"
+  },
+  "band_bond": {
+    "name": "团伙行动",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_lethania": {
+    "name": "流动乐章",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_ursus": {
+    "name": "无惧风雪",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  },
+  "band_iberia": {
+    "name": "出航时刻",
+    "status": "noCombat",
+    "reason": "不影响战斗：经济、商店、送人或准备阶段结果由当前输入体现"
+  }
+}

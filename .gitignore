@@ -1,0 +1,18 @@
+bin/
+obj/
+*.user
+.vs/
+node_modules/
+*.log
+logs/
+.codex-runs/
+docs/research/refs/
+dist/
+out/
+.dev.vars
+.wrangler/
+src/ui/dev/samples/
+
+# 玩家自愿采集的对局数据
+collect/
+__pycache__/

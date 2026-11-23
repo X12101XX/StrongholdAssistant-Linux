@@ -1,0 +1,83 @@
+<script lang="ts" module>
+  // 游戏素材里没有的通用图标用 Remix Icon（Apache-2.0），按需引入单个 SVG
+  import settings from 'remixicon/icons/System/settings-3-line.svg?raw'
+  import cloud from 'remixicon/icons/Business/cloud-line.svg?raw'
+  import cloudOff from 'remixicon/icons/Business/cloud-off-line.svg?raw'
+  import subtract from 'remixicon/icons/System/subtract-line.svg?raw'
+  import close from 'remixicon/icons/System/close-line.svg?raw'
+  import refresh from 'remixicon/icons/System/refresh-line.svg?raw'
+  import search from 'remixicon/icons/System/search-line.svg?raw'
+  import grid from 'remixicon/icons/Design/layout-grid-line.svg?raw'
+  import focus from 'remixicon/icons/Design/focus-3-line.svg?raw'
+  import add from 'remixicon/icons/System/add-line.svg?raw'
+  import star from 'remixicon/icons/System/star-line.svg?raw'
+  import starFill from 'remixicon/icons/System/star-fill.svg?raw'
+  import check from 'remixicon/icons/System/check-line.svg?raw'
+  import arrowRight from 'remixicon/icons/Arrows/arrow-right-s-line.svg?raw'
+  import arrowLeft from 'remixicon/icons/Arrows/arrow-left-s-line.svg?raw'
+  import arrowDown from 'remixicon/icons/Arrows/arrow-down-s-line.svg?raw'
+  import arrowUp from 'remixicon/icons/Arrows/arrow-up-s-line.svg?raw'
+  import contractLeft from 'remixicon/icons/Arrows/contract-left-line.svg?raw'
+  import expandRight from 'remixicon/icons/Arrows/expand-right-line.svg?raw'
+  import pencil from 'remixicon/icons/Design/pencil-line.svg?raw'
+  import trash from 'remixicon/icons/System/delete-bin-line.svg?raw'
+  import lock from 'remixicon/icons/System/lock-line.svg?raw'
+  import lockFill from 'remixicon/icons/System/lock-fill.svg?raw'
+  import forbid from 'remixicon/icons/System/forbid-line.svg?raw'
+  import magic from 'remixicon/icons/Design/magic-line.svg?raw'
+  import scan from 'remixicon/icons/Device/scan-line.svg?raw'
+  import stop from 'remixicon/icons/Media/stop-fill.svg?raw'
+  import download from 'remixicon/icons/System/download-2-line.svg?raw'
+  import upload from 'remixicon/icons/System/upload-2-line.svg?raw'
+  import folder from 'remixicon/icons/Document/folder-open-line.svg?raw'
+  import pin from 'remixicon/icons/Map/pushpin-line.svg?raw'
+  import pinFill from 'remixicon/icons/Map/pushpin-fill.svg?raw'
+  import heart from 'remixicon/icons/Health & Medical/heart-3-line.svg?raw'
+  import heartFill from 'remixicon/icons/Health & Medical/heart-3-fill.svg?raw'
+  import share from 'remixicon/icons/System/share-forward-line.svg?raw'
+  import paste from 'remixicon/icons/Document/clipboard-line.svg?raw'
+  import cut from 'remixicon/icons/Design/scissors-cut-line.svg?raw'
+  import copy from 'remixicon/icons/Document/file-copy-line.svg?raw'
+  import selectAll from 'remixicon/icons/Editor/text.svg?raw'
+  import maximize from 'remixicon/icons/Media/fullscreen-line.svg?raw'
+  import restore from 'remixicon/icons/Media/fullscreen-exit-line.svg?raw'
+  import chat from 'remixicon/icons/Communication/chat-3-line.svg?raw'
+  import flag from 'remixicon/icons/Business/flag-2-line.svg?raw'
+  import reply from 'remixicon/icons/Business/reply-line.svg?raw'
+  import workbench from 'remixicon/icons/Design/layout-left-line.svg?raw'
+  import sidebar from 'remixicon/icons/System/side-bar-line.svg?raw'
+  import history from 'remixicon/icons/System/history-line.svg?raw'
+  import chart from 'remixicon/icons/Business/bar-chart-2-line.svg?raw'
+  import eye from 'remixicon/icons/System/eye-line.svg?raw'
+  import eyeOff from 'remixicon/icons/System/eye-off-line.svg?raw'
+  import bell from 'remixicon/icons/Media/notification-3-line.svg?raw'
+  import award from 'remixicon/icons/Business/award-line.svg?raw'
+  import play from 'remixicon/icons/Media/play-fill.svg?raw'
+  import skip from 'remixicon/icons/Media/skip-forward-line.svg?raw'
+  import warn from 'remixicon/icons/System/error-warning-line.svg?raw'
+  import robot from 'remixicon/icons/User & Faces/robot-2-line.svg?raw'
+
+  const icons = { settings, cloud, cloudOff, subtract, close, refresh, search, grid, focus, add, star, starFill, check, arrowRight, arrowLeft, arrowDown, arrowUp, contractLeft, expandRight, pencil, trash, lock, lockFill, forbid, magic, scan, stop, heart, heartFill, pin, pinFill, download, upload, folder, share, paste, cut, copy, selectAll, chat, flag, reply, workbench, sidebar, history, chart, eye, eyeOff, bell, award, maximize, restore, play, skip, warn, robot }
+  export type IconName = keyof typeof icons
+</script>
+
+<script lang="ts">
+  let { name, size = 16 }: { name: IconName; size?: number } = $props()
+</script>
+
+<span class="ri" style:--s="{size}px" aria-hidden="true">{@html icons[name]}</span>
+
+<style>
+  .ri {
+    display: inline-grid;
+    place-items: center;
+    width: var(--s);
+    height: var(--s);
+    flex: none;
+  }
+  .ri :global(svg) {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+  }
+</style>

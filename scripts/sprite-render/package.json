@@ -1,0 +1,10 @@
+{
+  "name": "sprite-render",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": { "render": "node render.cjs" },
+  "dependencies": {
+    "@pixi-spine/runtime-3.8": "4.0.6",
+    "@napi-rs/canvas": "0.1.80"
+  }
+}

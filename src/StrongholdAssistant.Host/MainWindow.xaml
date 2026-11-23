@@ -1,0 +1,87 @@
+<Window x:Class="StrongholdAssistant.Host.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="高效雅雅·卫戍协议助手" Width="380" Height="900" MinWidth="320" MaxWidth="460"
+        WindowStyle="None" ResizeMode="CanMinimize" Loaded="OnLoaded" Icon="icon.ico" Background="{DynamicResource SplashBackground}">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="5" GlassFrameThickness="0" CornerRadius="0" />
+    </WindowChrome.WindowChrome>
+    <Window.Resources>
+        <SolidColorBrush x:Key="SplashBackground" Color="#0B0C0D" />
+        <SolidColorBrush x:Key="SplashBorder" Color="#222528" />
+        <SolidColorBrush x:Key="SplashMuted" Color="#7D8287" />
+        <SolidColorBrush x:Key="SplashAccent" Color="#22E3B2" />
+        <SolidColorBrush x:Key="SplashText" Color="#ECEDEE" />
+        <SolidColorBrush x:Key="SplashHover" Color="#24272A" />
+        <Style x:Key="SplashButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource SplashHover}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Grid>
+        <!-- 启动骨架：和网页第一帧对齐（同样的标题栏、同样的底色），网页就绪后直接换上去，看不出切换。
+             WebView2 是原生子窗口，WPF 元素盖不到它上面，所以不做交叉淡化，入场动画由网页自己播。 -->
+        <Grid x:Name="Splash">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="34" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Border Grid.Row="0" Background="{DynamicResource SplashBackground}" BorderBrush="{DynamicResource SplashBorder}" BorderThickness="0,0,0,1"
+                    MouseLeftButtonDown="OnSplashDrag">
+                <DockPanel LastChildFill="False">
+                    <Button DockPanel.Dock="Right" Width="30" Click="OnSplashClose" ToolTip="关闭" Style="{StaticResource SplashButton}">
+                        <Path Data="M0,0 L9,9 M9,0 L0,9" Stroke="{DynamicResource SplashMuted}" StrokeThickness="1.4" />
+                    </Button>
+                    <Button DockPanel.Dock="Right" Width="30" Click="OnSplashMinimize" ToolTip="最小化" Style="{StaticResource SplashButton}">
+                        <Path Data="M0,0 L10,0" Stroke="{DynamicResource SplashMuted}" StrokeThickness="1.4" />
+                    </Button>
+                    <Image DockPanel.Dock="Left" Source="icon.ico" Width="18" Height="18" Margin="10,0,0,0"
+                           RenderOptions.BitmapScalingMode="HighQuality" />
+                    <TextBlock DockPanel.Dock="Left" Margin="8,0,0,0" VerticalAlignment="Center" Text="高效雅雅·卫戍协议助手"
+                               FontFamily="Microsoft YaHei UI" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource SplashText}" />
+                </DockPanel>
+            </Border>
+            <Grid x:Name="SplashBody" Grid.Row="1">
+                <Grid.Background>
+                    <RadialGradientBrush Center="0.5,0" GradientOrigin="0.5,0" RadiusX="1.2" RadiusY="0.6">
+                        <GradientStop Color="#15171A" Offset="0" />
+                        <GradientStop Color="#0B0C0D" Offset="1" />
+                    </RadialGradientBrush>
+                </Grid.Background>
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Rectangle x:Name="SplashDot" Width="8" Height="8" Fill="{DynamicResource SplashAccent}" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                        <Rectangle.RenderTransform>
+                            <RotateTransform Angle="45" />
+                        </Rectangle.RenderTransform>
+                        <Rectangle.Triggers>
+                            <EventTrigger RoutedEvent="Loaded">
+                                <BeginStoryboard>
+                                    <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.25" Duration="0:0:0.7" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                        </Rectangle.Triggers>
+                    </Rectangle>
+                    <TextBlock Margin="0,10,0,0" Text="正在载入" FontFamily="Microsoft YaHei UI" FontSize="12" Foreground="{DynamicResource SplashMuted}" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+        <wv:WebView2 x:Name="Browser" Visibility="Hidden" />
+    </Grid>
+</Window>

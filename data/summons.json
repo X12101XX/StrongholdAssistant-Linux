@@ -1,0 +1,689 @@
+{
+  "season": "act3autochess/V3_1",
+  "source": "https://github.com/Kengxxiao/ArknightsGameData/tree/master/zh_CN/gamedata/excel",
+  "hashes": {
+    "activity_table": "26dc00605d5f7cd46d491b108c16beda388fbc94ea94bb33eb0809d9275fb23e",
+    "character_table": "af28555d90a6d667304989d1677efa4ef46ffe89eff4145dccd8997329d8ed52"
+  },
+  "occupancyEvidence": "独立部署的 token 占据部署格；不等同于占用干员部署人数。角标未知项保留 null。",
+  "unresolved": [
+    {
+      "tokenId": "token_10057_svash2_eagle",
+      "owner": "凛御银灰"
+    }
+  ],
+  "summons": [
+    {
+      "name": "樱桃三号",
+      "charId": "token_10037_mitm_trshrb",
+      "owners": [
+        "渡桥"
+      ],
+      "ownerTiers": [
+        2
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": true,
+      "description": "能够阻挡一个敌人，作为小车形态存在时只能部署在召唤者攻击范围内\n作为小车形态存在时被击败后会在20秒后自动刷新；作为残骸形态存在时可以阻挡1个敌人\n作为小车形态存在时被击败后会在17秒后自动刷新；作为残骸形态存在时可以阻挡1个敌人\n作为小车形态存在时被击败后会在15秒后自动刷新；作为残骸形态存在时可以阻挡1个敌人",
+      "hp": 2750,
+      "defense": 250,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10037_mitm_trshrb/meta.json"
+    },
+    {
+      "name": "狼群",
+      "charId": "token_10028_vigil_wolf",
+      "owners": [
+        "伺夜"
+      ],
+      "ownerTiers": [
+        3
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": true,
+      "description": "只能部署在召唤者攻击范围内\n每30秒增加一只“狼影”（至多3只），每存在一只“狼影”，狼群阻挡数+1，每次攻击额外造成一次伤害；当存在多于1只“狼影”时，受到致命伤害时损失一只“狼影”但回复所有生命\n每27秒增加一只“狼影”（至多3只），每存在一只“狼影”，狼群阻挡数+1，每次攻击额外造成一次伤害；当存在多于1只“狼影”时，受到致命伤害时损失一只“狼影”但回复所有生命\n每25秒增加一只“狼影”（至多3只），每存在一只“狼影”，狼群阻挡数+1，每次攻击额外造成一次伤害；当存在多于1只“狼影”时，受到致命伤害时损失一只“狼影”但回复所有生命\n攻击阻挡的目标时无视其175的防御力\n攻击阻挡的目标时无视其200<@ba.talpu>（+25）</>的防御力",
+      "hp": 1100,
+      "defense": 317,
+      "resistance": 20,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10028_vigil_wolf/meta.json"
+    },
+    {
+      "name": "全自动造型仪",
+      "charId": "token_10018_robrta_mach",
+      "owners": [
+        "罗比菈塔"
+      ],
+      "ownerTiers": [
+        3
+      ],
+      "badgeTier": 3,
+      "badgeEvidence": "docs/research/truth/291/labels.json",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不会受到攻击\n使一名近战位上的单位防御力+10%并获得1层<$ba.shield>护盾</>（持续15秒，防御加成不叠加）\n使一名近战位上的单位防御力+13%<@ba.talpu>（+3%）</>并获得1层<$ba.shield>护盾</>（持续15秒，防御加成不叠加）\n使一名近战位上的单位防御力+20%并获得1层<$ba.shield>护盾</>（持续25秒，防御加成不叠加）\n使一名近战位上的单位防御力+23%<@ba.talpu>（+3%）</>并获得1层<$ba.shield>护盾</>（持续25秒，防御加成不叠加）\n使一名近战位上的单位防御力+30%并获得2层<$ba.shield>护盾</>（持续25秒，防御加成不叠加）\n使一名近战位上的单位防御力+33%<@ba.talpu>（+3%）</>并获得2层<$ba.shield>护盾</>（持续25秒，防御加成不叠加）",
+      "hp": 100,
+      "defense": 0,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10018_robrta_mach/meta.json"
+    },
+    {
+      "name": "爬行号·防护单元",
+      "charId": "token_10041_cathy_catsld",
+      "owners": [
+        "凯瑟琳"
+      ],
+      "ownerTiers": [
+        3
+      ],
+      "badgeTier": 3,
+      "badgeEvidence": "docs/research/truth/291/labels.json",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不会受到攻击\n使攻击范围内一名友方干员获得相当于凯瑟琳生命上限10%的<$ba.barrier>屏障</>（若目标最近5秒内未受攻击，则每秒补充相当于凯瑟琳生命上限6%的<$ba.barrier>屏障</>，不超过初始上限），装置效果不叠加，持续时间无限\n使攻击范围内一名友方干员获得相当于凯瑟琳生命上限12%<@ba.talpu>（+2%）</>的<$ba.barrier>屏障</>（若目标最近5秒内未受攻击，则每秒补充相当于凯瑟琳生命上限6%的<$ba.barrier>屏障</>，不超过初始上限），装置效果不叠加，持续时间无限\n使攻击范围内一名友方干员获得相当于凯瑟琳生命上限15%的<$ba.barrier>屏障</>（若目标最近5秒内未受攻击，则每秒补充相当于凯瑟琳生命上限6%的<$ba.barrier>屏障</>，不超过初始上限），装置效果不叠加，持续时间无限\n使攻击范围内一名友方干员获得相当于凯瑟琳生命上限17%<@ba.talpu>（+2%）</>的<$ba.barrier>屏障</>（若目标最近5秒内未受攻击，则每秒补充相当于凯瑟琳生命上限6%的<$ba.barrier>屏障</>，不超过初始上限），装置效果不叠加，持续时间无限\n使攻击范围内一名友方干员获得相当于凯瑟琳生命上限20%的<$ba.barrier>屏障</>（若目标最近5秒内未受攻击，则每秒补充相当于凯瑟琳生命上限6%的<$ba.barrier>屏障</>，不超过初始上限），装置效果不叠加，持续时间无限\n使攻击范围内一名友方干员获得相当于凯瑟琳生命上限22%<@ba.talpu>（+2%）</>的<$ba.barrier>屏障</>（若目标最近5秒内未受攻击，则每秒补充相当于凯瑟琳生命上限6%的<$ba.barrier>屏障</>，不超过初始上限），装置效果不叠加，持续时间无限",
+      "hp": 100,
+      "defense": 0,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10041_cathy_catsld/meta.json"
+    },
+    {
+      "name": "纸偶",
+      "charId": "token_10022_kazema_shadow",
+      "owners": [
+        "风丸"
+      ],
+      "ownerTiers": [
+        3
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不阻挡敌人\n-",
+      "hp": 2372,
+      "defense": 318,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10022_kazema_shadow/meta.json"
+    },
+    {
+      "name": "旧日残影",
+      "charId": "token_10024_ebnhlz_rcube",
+      "owners": [
+        "黑键"
+      ],
+      "ownerTiers": [
+        4
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "-",
+      "hp": 1000,
+      "defense": 0,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10024_ebnhlz_rcube/meta.json"
+    },
+    {
+      "name": "工程蓄水炮",
+      "charId": "token_10009_weedy_cannon",
+      "owners": [
+        "温蒂"
+      ],
+      "ownerTiers": [
+        4
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不会受到攻击\n攻击时会将目标小力度地推开，部署后持续15秒\n攻击时会将目标小力度地推开，部署后持续20秒\n普通攻击和技能的推力增加一级，且在温蒂周围4格内时令其每3秒获得1点技力",
+      "hp": 100,
+      "defense": 100,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10009_weedy_cannon/meta.json"
+    },
+    {
+      "name": "机动盾牌",
+      "charId": "token_10032_jesca2_jckshd",
+      "owners": [
+        "涤火杰西卡"
+      ],
+      "ownerTiers": [
+        4
+      ],
+      "badgeTier": 4,
+      "badgeEvidence": "docs/research/truth/291/labels.json",
+      "occupiesCell": true,
+      "baseBlock": 2,
+      "dynamicBlock": false,
+      "description": "更容易受到攻击\n更容易受到伤害",
+      "hp": 3802,
+      "defense": 755,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10032_jesca2_jckshd/meta.json"
+    },
+    {
+      "name": "白铁™多功能平台",
+      "charId": "token_10027_ironmn_pile1",
+      "owners": [
+        "白铁"
+      ],
+      "ownerTiers": [
+        4
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不会受到攻击\n使攻击范围内一名友方干员的攻击力+12%，持续时间无限",
+      "hp": 100,
+      "defense": 0,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10027_ironmn_pile1/meta.json"
+    },
+    {
+      "name": "白铁™多功能平台",
+      "charId": "token_10027_ironmn_pile2",
+      "owners": [
+        "白铁"
+      ],
+      "ownerTiers": [
+        4
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不会受到攻击\n使攻击范围内一名友方干员每3.5秒额外获得1点技力，每秒流失0.4%生命，持续时间无限",
+      "hp": 2000,
+      "defense": 0,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10027_ironmn_pile2/meta.json"
+    },
+    {
+      "name": "铁钳号·原型机",
+      "charId": "token_10027_ironmn_pile3",
+      "owners": [
+        "白铁"
+      ],
+      "ownerTiers": [
+        4
+      ],
+      "badgeTier": 4,
+      "badgeEvidence": "docs/research/truth/291/labels.json",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "可被我方干员攻击但不受伤害，受到工匠干员攻击时回复生命\n使身后一格友方干员受到的物理伤害减少20%，持续时间无限",
+      "hp": 6000,
+      "defense": 2000,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10027_ironmn_pile3/meta.json"
+    },
+    {
+      "name": "此面向敌",
+      "charId": "token_10008_cqbw_box",
+      "owners": [
+        "W"
+      ],
+      "ownerTiers": [
+        4
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "-",
+      "hp": 1000,
+      "defense": 0,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10008_cqbw_box/meta.json"
+    },
+    {
+      "name": "夜灯",
+      "charId": "token_10029_slent2_protrb",
+      "owners": [
+        "淬羽赫默"
+      ],
+      "ownerTiers": [
+        4
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不会受到攻击\n使攻击范围内的友军获得8%的<$ba.protect>庇护</>，友军的生命越低该效果越强（低于30%生命时获得最大15%的<$ba.protect>庇护</>）\n使攻击范围内的友军获得10%的<$ba.protect>庇护</>，友军的生命越低该效果越强（低于30%生命时获得最大24%的<$ba.protect>庇护</>）",
+      "hp": 1000,
+      "defense": 0,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10029_slent2_protrb/meta.json"
+    },
+    {
+      "name": "幻影",
+      "charId": "token_10003_cgbird_bird",
+      "owners": [
+        "夜莺"
+      ],
+      "ownerTiers": [
+        4
+      ],
+      "badgeTier": 4,
+      "badgeEvidence": "field-equipment-tier4.png / field-summon-side.png",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不阻挡敌人\n拥有75法术抗性和30%的物理闪避，并且更容易吸引敌人的攻击，同时每秒流失3%的最大生命",
+      "hp": 6000,
+      "defense": 0,
+      "resistance": 75,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10003_cgbird_bird/meta.json"
+    },
+    {
+      "name": "保护目标（冻结状态）",
+      "charId": "token_10058_sbell2_icetgt",
+      "owners": [
+        "圣聆初雪"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 3,
+      "dynamicBlock": false,
+      "description": "能够阻挡三个敌人",
+      "hp": 3500,
+      "defense": 800,
+      "resistance": 15,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10058_sbell2_icetgt/meta.json"
+    },
+    {
+      "name": "风雪之眼",
+      "charId": "token_10057_svash2_eagle1",
+      "owners": [
+        "凛御银灰"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "凛御银灰在场时添加至待部署区。部署费用随凛御银灰的技能而变化\n使左侧的干员初始技力增加，再部署时间减少",
+      "hp": 100,
+      "defense": 0,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10057_svash2_eagle1/meta.json"
+    },
+    {
+      "name": "风雪之眼",
+      "charId": "token_10057_svash2_eagle2",
+      "owners": [
+        "凛御银灰"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "凛御银灰在场时添加至待部署区。部署费用随凛御银灰的技能而变化\n使左侧的干员初始技力增加，再部署时间减少",
+      "hp": 100,
+      "defense": 0,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10057_svash2_eagle2/meta.json"
+    },
+    {
+      "name": "风雪之眼",
+      "charId": "token_10057_svash2_eagle3",
+      "owners": [
+        "凛御银灰"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "凛御银灰在场时添加至待部署区。部署费用随凛御银灰的技能而变化\n使左侧的干员初始技力增加，再部署时间减少",
+      "hp": 100,
+      "defense": 0,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10057_svash2_eagle3/meta.json"
+    },
+    {
+      "name": "从不混淆的方向",
+      "charId": "token_10039_ulpia_block",
+      "owners": [
+        "乌尔比安"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "乌尔比安技能结束时返回该位置，并且其他干员不能部署\n-",
+      "hp": 3500,
+      "defense": 650,
+      "resistance": 50,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10039_ulpia_block/meta.json"
+    },
+    {
+      "name": "牵绊",
+      "charId": "token_10065_demetr_dmtpos",
+      "owners": [
+        "贝洛内"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "贝洛内技能结束时返回该位置，并且其他干员不能部署\n-",
+      "hp": 1000,
+      "defense": 100,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10065_demetr_dmtpos/meta.json"
+    },
+    {
+      "name": "黄金盟誓",
+      "charId": "token_10040_siege2_vlion",
+      "owners": [
+        "维娜·维多利亚"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 1,
+      "dynamicBlock": false,
+      "description": "能够阻挡一个敌人，攻击造成<@ba.kw>真实伤害</>\n-",
+      "hp": 4000,
+      "defense": 300,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10040_siege2_vlion/meta.json"
+    },
+    {
+      "name": "迷迭香的战术装备",
+      "charId": "token_10012_rosmon_shield",
+      "owners": [
+        "迷迭香"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 2,
+      "dynamicBlock": false,
+      "description": "能够阻挡两个敌人，降低被阻挡单位的防御力\n-",
+      "hp": 5000,
+      "defense": 520,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10012_rosmon_shield/meta.json"
+    },
+    {
+      "name": "重构体",
+      "charId": "token_10050_monstr_prosts",
+      "owners": [
+        "Mon3tr"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "自身生命会不断流失",
+      "hp": 5433,
+      "defense": 221,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10050_monstr_prosts/meta.json"
+    },
+    {
+      "name": "指挥中心",
+      "charId": "token_10066_closur_ourbase",
+      "owners": [
+        "可露希尔"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 2,
+      "dynamicBlock": false,
+      "description": "不攻击，能够阻挡两个敌人，只能部署在召唤者攻击范围内\n效果范围随可露希尔携带技能变化，范围内的友方单位视为可露希尔的援军",
+      "hp": 3275,
+      "defense": 432,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10066_closur_ourbase/meta.json"
+    },
+    {
+      "name": "“打字机”",
+      "charId": "token_10026_bgsnow_subbow",
+      "owners": [
+        "鸿雪"
+      ],
+      "ownerTiers": [
+        5
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不会受到攻击\n-\n“打字机”的攻击会使命中目标的防御力下降18%，持续4秒；若“打字机”放在鸿雪周围四格则效果提升至23%\n“打字机”的攻击会使命中目标的防御力下降20%<@ba.talpu>（+2%）</>，持续5<@ba.talpu>（+1）</>秒；若“打字机”放在鸿雪周围四格则效果提升至25%<@ba.talpu>（+2%）</>",
+      "hp": 500,
+      "defense": 0,
+      "resistance": 0,
+      "position": "RANGED",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10026_bgsnow_subbow/meta.json"
+    },
+    {
+      "name": "斯卡蒂的海嗣",
+      "charId": "token_10017_skadi2_dedant",
+      "owners": [
+        "浊心斯卡蒂"
+      ],
+      "ownerTiers": [
+        6
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不会受到攻击\n部署后持续15秒\n部署后持续25秒\n-",
+      "hp": 100,
+      "defense": 0,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10017_skadi2_dedant/meta.json"
+    },
+    {
+      "name": "“耀阳”",
+      "charId": "token_10019_nearl2_sword",
+      "owners": [
+        "耀骑士临光"
+      ],
+      "ownerTiers": [
+        6
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 2,
+      "dynamicBlock": false,
+      "description": "能够阻挡两个敌人\n-",
+      "hp": 6000,
+      "defense": 600,
+      "resistance": 20,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10019_nearl2_sword/meta.json"
+    },
+    {
+      "name": "本能的召唤",
+      "charId": "token_10054_phatm2_encdool",
+      "owners": [
+        "酒神"
+      ],
+      "ownerTiers": [
+        6
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": false,
+      "description": "不会受到攻击，只能部署在近战位\n-",
+      "hp": 100,
+      "defense": 0,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10054_phatm2_encdool/meta.json"
+    },
+    {
+      "name": "迷狂牢笼",
+      "charId": "token_10055_phatm2_mndclv",
+      "owners": [
+        "酒神"
+      ],
+      "ownerTiers": [
+        6
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": true,
+      "description": "牢笼可以阻挡生成/刷新时本格所有敌人，没有阻挡目标或受到3次来自阻挡目标的攻击后消失，酒神技能结束后额外持续30秒",
+      "hp": 3,
+      "defense": 0,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10055_phatm2_mndclv/meta.json"
+    },
+    {
+      "name": "结构性原理",
+      "charId": "token_10069_mcnist_mcgraf",
+      "owners": [
+        "机械师"
+      ],
+      "ownerTiers": [
+        6
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 3,
+      "dynamicBlock": false,
+      "description": "能够阻挡三个敌人\n部署后持续20秒\n部署后持续30秒\n部署时获得最大生命30%的<$ba.barrier>屏障</>；来自自身的<$ba.barrier>屏障</>可以抵挡超额的伤害\n部署时获得最大生命40%<@ba.talpu>（+10%）</>的<$ba.barrier>屏障</>；来自自身的<$ba.barrier>屏障</>可以抵挡超额的伤害",
+      "hp": 3500,
+      "defense": 550,
+      "resistance": 0,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10069_mcnist_mcgraf/meta.json"
+    },
+    {
+      "name": "“小自在”",
+      "charId": "token_10015_dusk_drgn",
+      "owners": [
+        "夕"
+      ],
+      "ownerTiers": [
+        6
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 2,
+      "dynamicBlock": false,
+      "description": "攻击造成<@ba.kw>法术伤害</>\n-",
+      "hp": 1997,
+      "defense": 302,
+      "resistance": 50,
+      "position": "MELEE",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10015_dusk_drgn/meta.json"
+    },
+    {
+      "name": "流形",
+      "charId": "token_10030_mlyss_wtrman",
+      "owners": [
+        "缪尔赛思"
+      ],
+      "ownerTiers": [
+        6
+      ],
+      "badgeTier": null,
+      "badgeEvidence": "待截图核实",
+      "occupiesCell": true,
+      "baseBlock": 0,
+      "dynamicBlock": true,
+      "description": "初始攻击造成<@ba.kw>法术伤害</>，只能部署在召唤者攻击范围内\n技能开启时复制目标50%的生命值、攻击力、防御力、法抗，以及阻挡数、攻击间隔、攻击范围、初始伤害类型（不攻击、治疗类型则不继承）\n技能开启时复制目标70%的生命值、攻击力、防御力、法抗，以及阻挡数、攻击间隔、攻击范围、初始伤害类型（不攻击、治疗类型则不继承）\n技能开启时复制目标90%的生命值、攻击力、防御力、法抗，以及阻挡数、攻击间隔、攻击范围、初始伤害类型（不攻击、治疗类型则不继承）",
+      "hp": 2000,
+      "defense": 257,
+      "resistance": 0,
+      "position": "ALL",
+      "spine": "https://torappu.prts.wiki/assets/char_spine/token_10030_mlyss_wtrman/meta.json"
+    }
+  ]
+}

@@ -1,0 +1,307 @@
+// 2026-11-11：搬自参考项目；ShopReaderFixture 改用宿主 data 目录，见 NOTICE。
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using ASPAssistant.Core.Data;
+using ASPAssistant.Core.Models;
+using ASPAssistant.Core.Services;
+using FluentAssertions;
+using Moq;
+
+namespace ASPAssistant.Tests.Services;
+
+[Collection("Shop OCR")]
+public class ShopReaderTests(ShopReaderFixture fixture, EnemyRecognitionFixture recognition, Xunit.Abstractions.ITestOutputHelper output)
+{
+    [Fact]
+    public async Task AlternatingEmptySlotsKeepBaidurenMarkerOnSecondCard()
+    {
+        const string file = "shop-closure-empty-1920x1080.png";
+        fixture.SelectTheme(file);
+        using var image = new Bitmap(fixture.Sample(file));
+        var items = await fixture.Reader.ReadAsync(File.ReadAllBytes(fixture.Sample(file)), image.Width, image.Height, ["摆渡人"]);
+        double k = fixture.Reader.UiScale!.Value;
+        bool visible = ShopLayout.HasCards(image, k, GameShopTheme.Closure);
+        var card = Assert.Single(items);
+        var box = card.CardRegion;
+        double left = box.X * image.Width, right = (box.X + box.Width) * image.Width;
+        double top = box.Y * image.Height, bottom = (box.Y + box.Height) * image.Height;
+        output.WriteLine($"k={k:F5} 卡边可见={visible} 槽位={card.SlotIndex} 框=({left:F1},{top:F1})–({right:F1},{bottom:F1})");
+        Assert.Equal(1d, k);
+        Assert.True(visible);
+        Assert.Equal("1:摆渡人", card.Id);
+        // 样图第二格彩色卡身约为 (581,809)～(791,1069)，忽略顶部突起和边缘晕色。
+        Assert.InRange(left, 579, 583);
+        Assert.InRange(right, 789, 793);
+        Assert.InRange(top, 807, 811);
+        Assert.InRange(bottom, 1067, 1071);
+    }
+
+    [Fact]
+    public void MumuUi100KeepsScaleAfterTwoPurchases()
+    {
+        // 396 同一局：第 3～6 格有货，购买后只剩第 3、6 格。
+        using var before = new Bitmap(fixture.Sample("live398/05.jpg"));
+        using var after = new Bitmap(fixture.Sample("live398/11.jpg"));
+        double scale = GameUiScale.Shop(before);
+        Assert.InRange(scale, 1.10, 1.11);
+        Assert.Equal(scale, GameUiScale.Shop(after));
+    }
+
+    [Fact]
+    public async Task Closure1600x1024_TracksFourCardsInTheirSlots()
+    {
+        const string file = "shop-closure-round1-1600x1024.png";
+        fixture.SelectTheme(file);
+        string[] tracked = ["坚守盾牌", "拉普兰德", "烈夏", "慕斯"];
+        var items = await fixture.Reader.ReadAsync(File.ReadAllBytes(fixture.Sample(file)), 1600, 1024, tracked);
+        foreach (var item in items)
+            output.WriteLine($"{item.Name}：槽位 {item.SlotIndex}，卡框 {item.CardRegion}，名称 {item.OcrRegion}");
+        items.Select(i => i.Name).Should().Equal(tracked);
+        items.Select(i => i.SlotIndex).Should().Equal(2, 3, 4, 5);
+        fixture.Reader.HasVisibleCards.Should().BeTrue();
+        // 样图四张卡身横向约为 667～840、850～1023、1033～1206、1216～1389。
+        for (int i = 0; i < items.Count; i++)
+        {
+            double left = 667 + i * 183;
+            var card = items[i].CardRegion;
+            var name = items[i].OcrRegion;
+            ((card.X + card.Width / 2) * 1600).Should().BeInRange(left, left + 173);
+            ((card.Y + card.Height / 2) * 1024).Should().BeInRange(800, 1015);
+            ((name.X + name.Width / 2) * 1600).Should().BeInRange(left, left + 173);
+            ((name.Y + name.Height / 2) * 1024).Should().BeInRange(960, 990);
+        }
+    }
+
+    [Fact]
+    public async Task ClosureUserSample_TracksLiAndBaiduren()
+    {
+        var engine = recognition.Engine;
+        var recording = new Mock<IOcrEngine>();
+        recording.Setup(e => e.RecognizeRegionAsync(It.IsAny<byte[]>(), It.IsAny<int>(), It.IsAny<int>(),
+            It.IsAny<int>(), It.IsAny<int>())).Returns(async (byte[] bytes, int x, int y, int w, int h) =>
+        {
+            var texts = await engine.RecognizeRegionAsync(bytes, x, y, w, h);
+            foreach (var text in texts)
+                output.WriteLine($"OCR：{text.Text}，位置：{text.Box}");
+            return texts;
+        });
+        var reader = new ShopReader(recording.Object, fixture.Names) { Theme = GameShopTheme.Closure };
+        using var source = new Bitmap(fixture.Sample("shop-closure-li-user-1665x1012.jpg"));
+        // 用户图裁掉了顶部和右侧：按约 220px 卡距补到 1080p 画布。
+        // 仅从既有样图补齐缺失的收起区域，保留用户图的卡片和名称像素。
+        using var resized = new Bitmap(1920, 1080);
+        using var control = new Bitmap(fixture.Sample("shop-tier4-gray.png"));
+        using (var graphics = Graphics.FromImage(resized))
+        {
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.Clear(Color.Black);
+            graphics.DrawImage(source, 0, 68, source.Width, source.Height);
+            graphics.DrawImage(control, new Rectangle(1700, 990, 220, 50), 1700, 990, 220, 50, GraphicsUnit.Pixel);
+        }
+        using var stream = new MemoryStream();
+        resized.Save(stream, ImageFormat.Png);
+        var items = await reader.ReadAsync(stream.ToArray(), resized.Width, resized.Height, ["砾", "摆渡人"]);
+        items.Select(i => i.Name).Should().Equal("摆渡人", "砾");
+        items.Single(i => i.Name == "摆渡人").SlotIndex.Should().Be(3);
+        items.Single(i => i.Name == "砾").SlotIndex.Should().Be(4);
+    }
+
+    [Fact]
+    public void Match_SingleCharacterStillRequiresWholeNameAndMerchandiseArea()
+    {
+        var reader = new ShopReader(Mock.Of<IOcrEngine>(), ["砾", "山"]);
+        reader.Match([
+            new("砂砾", (2468, 390, 156, 40)),
+            new("△山", (3500, 390, 100, 40)),
+            new("收起", (3500, 370, 160, 60))], 1920, 1080, 810, ["砾", "山"])
+            .Should().BeEmpty();
+    }
+
+    // These run the real bundled PaddleOCR models against anonymized client crops.
+    [Theory]
+    [InlineData("shop-ui100-2000x1125.png", "盟约之币|深靛|深靛|深靛")]
+    [InlineData("shop-terminal-ui100-2000x1125.png", "随身身份牌|深靛|陨星|慕斯")]
+    [InlineData("shop-ursus-ui100-2000x1125.png", "虹彩活血饮料|灰喉|陨星|慕斯")]
+    [InlineData("shop-tier2-color.png", "聚合急救箱|渡桥|杰克|陨星|艾丝黛尔")]
+    [InlineData("shop-tier4-gray.png", "卫戍推荐信|摆渡人|Miss.Christine|奥斯塔|空弦|山")]
+    [InlineData("shop-tier6-frozen.png", "奥斯塔|拉普兰德|斥罪|鸿雪")]
+    [InlineData("shop-tier6-glow-a.png", "突袭手雷|可露希尔|奥斯塔|拉普兰德|斥罪|鸿雪")]
+    [InlineData("shop-tier6-glow-b.png", "突袭手雷|可露希尔|奥斯塔|拉普兰德|斥罪|鸿雪")]
+    [InlineData("shop-tier6-frozen-gray-glow.png", "护盾无人机|奥斯塔|水灯心|忍冬|鸿雪|空弦")]
+    [InlineData("shop-frontier-tier1-color.png", "坚守盾牌|野鬃|角峰|褐果")]
+    [InlineData("shop-frontier-tier2-glow.png", "紧急调度券|承曦格雷伊|幽灵鲨|角峰|慕斯")]
+    [InlineData("shop-frontier-tier2-frozen-gray.png", "卫戍推荐信|砾|哈洛德|雪猎|云迹")]
+    [InlineData("shop-frontier-tier4-gray-glow.png", "伊比利亚骨刺刀|卡涅利安|极光|艾雅法拉|瑕光|云迹")]
+    [InlineData("shop-terminal-tier1-color.png", "虹彩活血饮料|卡达|慕斯|角峰")]
+    [InlineData("shop-terminal-tier2-duplicates.png", "源石溶剂|地灵|陨星|褐果|地灵")]
+    [InlineData("shop-terminal-tier4-gray.png", "随身身份牌|斯卡蒂|深巡|复奏|风絮|耶拉")]
+    [InlineData("shop-terminal-tier4-frozen-gray.png", "随身身份牌|斯卡蒂|深巡|复奏|风絮|耶拉")]
+    public async Task RealShopSamples_ReadEquipmentAndOperators(string file, string expected)
+    {
+        fixture.SelectTheme(file);
+        using var bitmap = new Bitmap(fixture.Sample(file));
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var items = await fixture.Reader.ReadAsync(File.ReadAllBytes(fixture.Sample(file)), bitmap.Width, bitmap.Height, fixture.Names);
+        double ms = timer.Elapsed.TotalMilliseconds;
+        output.WriteLine($"{file} k={GameUiScale.Shop(bitmap):F5} ms={ms:F1}");
+        items.Select(i => i.Name).Should().Equal(expected.Split('|'));
+        items.Select(i => i.Id).Should().OnlyHaveUniqueItems();
+        fixture.Reader.HasVisibleCards.Should().BeTrue();
+        items.Should().OnlyContain(i => i.OcrRegion.Y > .91 && i.OcrRegion.Y < .97
+            && i.OcrRegion.X >= 0 && i.OcrRegion.X + i.OcrRegion.Width <= 1);
+        if (file == "shop-tier6-frozen.png")
+            items[0].OcrRegion.X.Should().BeGreaterThan(.40, "two sold slots must not shift the remaining names left");
+        if (file.StartsWith("shop-frontier-", StringComparison.Ordinal) || file.StartsWith("shop-terminal-", StringComparison.Ordinal))
+            for (int i = 0; i < items.Count; i++)
+            {
+                double left = 360 + (6 - items.Count + i) * 220;
+                ((items[i].OcrRegion.X + items[i].OcrRegion.Width / 2) * 1920)
+                    .Should().BeInRange(left, left + 220, "each marker must stay on its own card");
+            }
+    }
+
+    [Theory]
+    [InlineData("shop-tier6-glow-a.png", "突袭手雷|可露希尔|奥斯塔|拉普兰德|斥罪|鸿雪", 1280, 720, 0)]
+    [InlineData("shop-tier6-glow-a.png", "突袭手雷|可露希尔|奥斯塔|拉普兰德|斥罪|鸿雪", 2560, 1080, 320)]
+    public async Task SyntheticResizeAndLetterbox_KeepNamePositions(string file, string expected, int width, int height, int padding)
+    {
+        fixture.SelectTheme(file);
+        using var source = new Bitmap(fixture.Sample(file));
+        using var resized = new Bitmap(width, height);
+        using (var g = Graphics.FromImage(resized))
+        {
+            g.Clear(Color.Black);
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(source, new Rectangle(padding, 0, width - 2 * padding, height));
+        }
+        using var stream = new MemoryStream();
+        resized.Save(stream, ImageFormat.Png);
+        var items = await fixture.Reader.ReadAsync(stream.ToArray(), width, height, fixture.Names);
+        items.Select(i => i.Name).Should().Equal(expected.Split('|'));
+        double left = 360 + (6 - items.Count) * 220;
+        ((items[0].OcrRegion.X + items[0].OcrRegion.Width / 2) * width)
+            .Should().BeInRange(padding + left * height / 1080, padding + (left + 220) * height / 1080);
+    }
+
+    [Fact]
+    public async Task SyntheticDuplicateCards_KeepTwoMarkersAfterMergingNameBands()
+    {
+        fixture.SelectTheme("shop-frontier-tier2-glow.png");
+        using var original = new Bitmap(fixture.Sample("shop-frontier-tier2-glow.png"));
+        using var shop = (Bitmap)original.Clone();
+        using (var graphics = Graphics.FromImage(shop))
+            graphics.DrawImage(original, new Rectangle(1020, 800, 220, 280), 1240, 800, 220, 280, GraphicsUnit.Pixel);
+        using var stream = new MemoryStream();
+        shop.Save(stream, ImageFormat.Png);
+        var items = await fixture.Reader.ReadAsync(stream.ToArray(), 1920, 1080, ["角峰"]);
+        items.Select(i => i.Id).Should().Equal("3:角峰", "4:角峰");
+        (items[1].OcrRegion.X - items[0].OcrRegion.X).Should().BeGreaterThan(.08);
+    }
+
+    [Theory]
+    [InlineData("shop-terminal-tier1-color.png")]
+    [InlineData("shop-frontier-tier1-color.png")]
+    [InlineData("shop-tier2-color.png")]
+    public async Task NameStripWithoutShopControl_DoesNotProduceMarkers(string file)
+    {
+        fixture.SelectTheme(file);
+        using var shop = new Bitmap(fixture.Sample(file));
+        using (var graphics = Graphics.FromImage(shop))
+            graphics.FillRectangle(Brushes.Black, 1680, 790, 240, 290);
+        using var stream = new MemoryStream();
+        shop.Save(stream, ImageFormat.Png);
+        (await fixture.Reader.ReadAsync(stream.ToArray(), 1920, 1080, fixture.Names)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SyntheticTier1_FourSlots_AreNotTreatedAsFive()
+    {
+        fixture.SelectTheme("shop-tier2-color.png");
+        using var source = new Bitmap(fixture.Sample("shop-tier2-color.png"));
+        using var fourSlots = new Bitmap(1920, 1080);
+        using (var g = Graphics.FromImage(fourSlots))
+        {
+            g.Clear(Color.Black);
+            g.DrawImage(source, new Rectangle(1700, 990, 220, 50), 1700, 990, 220, 50, GraphicsUnit.Pixel);
+            for (int slot = 0; slot < 4; slot++)
+                g.DrawImage(source, new Rectangle(795 + slot * 220, 990, 220, 50),
+                    575 + slot * 220, 990, 220, 50, GraphicsUnit.Pixel);
+        }
+        using var stream = new MemoryStream();
+        fourSlots.Save(stream, ImageFormat.Png);
+        var items = await fixture.Reader.ReadAsync(stream.ToArray(), 1920, 1080, fixture.Names);
+        items.Select(i => i.Name).Should().Equal("聚合急救箱", "渡桥", "杰克", "陨星");
+    }
+
+    [Fact]
+    public void Match_DuplicateNamesHaveSeparateStableIds()
+    {
+        var reader = new ShopReader(Mock.Of<IOcrEngine>(), ["奥斯塔"]);
+        var items = reader.Match([
+            new("奥斯塔", (1200, 390, 100, 40)),
+            new("奥斯塔", (1640, 390, 100, 40)),
+            new("收起", (3500, 370, 160, 60))], 1920, 1080, 810, ["奥斯塔"]);
+        items.Should().HaveCount(2);
+        items.Select(i => i.Id).Should().OnlyHaveUniqueItems();
+        items[1].OcrRegion.X.Should().BeGreaterThan(items[0].OcrRegion.X);
+    }
+
+    [Fact]
+    public void Match_UntrackedLongerEquipmentDoesNotMatchTrackedSuffix()
+    {
+        var reader = new ShopReader(Mock.Of<IOcrEngine>(), ["维式重锤", "终极维式重锤"]);
+        OcrTextResult[] texts = [new("品终极维式重锤", (740, 390, 220, 40)),
+            new("收起", (3500, 370, 160, 60))];
+        reader.Match(texts, 1920, 1080, 810, ["维式重锤"]).Should().BeEmpty();
+        reader.Match(texts, 1920, 1080, 810, ["维式重锤", "终极维式重锤"])
+            .Select(i => i.Name).Should().Equal("终极维式重锤");
+    }
+
+    [Fact]
+    public void Match_NameOutsideCardSlotsIsDiscarded()
+    {
+        var reader = new ShopReader(Mock.Of<IOcrEngine>(), ["可露希尔"]);
+        reader.Match([new("可露希尔", (3450, 390, 160, 40)),
+            new("收起", (3500, 370, 160, 60))], 1920, 1080, 810, ["可露希尔"])
+            .Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("info-ingame-1920x1080.png")]
+    [InlineData("gameplay-markers-1920x1080.png")]
+    public void NonShopScreensHaveNoCardEdges(string file)
+    {
+        using var image = new Bitmap(fixture.Sample(file));
+        foreach (var theme in Enum.GetValues<GameShopTheme>())
+            ShopLayout.HasCards(image, GameUiScale.Shop(image), theme).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Match_ClosedShopHasNoMarkers()
+    {
+        var reader = new ShopReader(Mock.Of<IOcrEngine>(), ["山"]);
+        reader.Match([new("山", (740, 390, 30, 40))], 1920, 1080, 810, ["山"]).Should().BeEmpty();
+    }
+}
+
+public sealed class ShopReaderFixture : IDisposable
+{
+    private readonly MaaOcrEngine _engine = NativeOcrEngines.Create();
+    public IReadOnlyList<string> Names { get; }
+    public ShopReader Reader { get; }
+    public void SelectTheme(string file) => Reader.Theme = file.StartsWith("shop-terminal-", StringComparison.Ordinal)
+        ? GameShopTheme.Terminal : file.StartsWith("shop-frontier-", StringComparison.Ordinal)
+            || file.StartsWith("shop-ursus-", StringComparison.Ordinal) ? GameShopTheme.Ursus : GameShopTheme.Closure;
+    public string Sample(string file) => Path.Combine(AppContext.BaseDirectory, "TestData", file);
+
+    public ShopReaderFixture()
+    {
+        var store = new JsonDataStore(Path.Combine(AppContext.BaseDirectory, "data"));
+        Names = store.LoadOperatorsAsync().GetAwaiter().GetResult().Select(o => o.Name)
+            .Concat(store.LoadEquipmentAsync().GetAwaiter().GetResult().Equipment.Select(e => e.Name)).Distinct().ToList();
+        Reader = new ShopReader(_engine, Names);
+    }
+
+    public void Dispose() => _engine.Dispose();
+}

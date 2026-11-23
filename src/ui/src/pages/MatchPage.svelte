@@ -1,0 +1,1620 @@
+<script lang="ts">
+  import { slide } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
+  import { app } from '../lib/state.svelte'
+  import { diyPool } from '../lib/roster.svelte'
+  import { fmtHp, asset, ROMAN } from '../lib/assets'
+  import SectionHeader from '../components/SectionHeader.svelte'
+  import BondIcon from '../components/BondIcon.svelte'
+  import OpTile from '../components/OpTile.svelte'
+  import LineupCard from '../components/LineupCard.svelte'
+  import Icon from '../components/Icon.svelte'
+  import EconomyBar from '../components/EconomyBar.svelte'
+  import FieldBoard from '../components/FieldBoard.svelte'
+  import StrategyGrid from '../components/StrategyGrid.svelte'
+  import ErrorNote from '../components/ErrorNote.svelte'
+  import BondStatus from '../components/BondStatus.svelte'
+  import RoundEnemyList from '../components/RoundEnemyList.svelte'
+  import { api } from '../lib/api'
+  import { openMenu, operatorMenu, slotMenu } from '../lib/menu.svelte'
+
+  // 本局：开局识别到的信息，排版仿游戏「确认本局信息」页；可手动修正；后面接本局能用的已存阵容
+  const m = $derived(app.match)
+  const core = $derived(m.covenants.filter((c) => app.cov(c.id).kind === 'core'))
+  const extra = $derived(m.covenants.filter((c) => app.cov(c.id).kind === 'extra'))
+  const boss = $derived(app.catalog.bosses.find((b) => b.id === m.bossId))
+  // 本局模式读到了才显示血量（开局页左上角的「规程等级16」「险境模拟」）
+  const bossHp = $derived(boss && m.mode ? boss.hp.find((h) => h.mode === m.mode!.id) : undefined)
+  // 导出诊断包：识别不了时直接从这里导，发群里反馈
+  async function exportDiag() {
+    try {
+      const path = await api.exportDiagnostics()
+      if (path) app.showToast(`诊断包已保存到 ${path}，发到群里就行`)
+    } catch (e) {
+      app.showToast((e as Error).message, true)
+    }
+  }
+  // 敌方情报：路线覆盖的快速开关（同设置里的总开关）；展开的特训敌人
+  const toggleRoutes = (on: boolean) => {
+    app.settings.routes.enabled = on
+    app.saveSettings()
+    app.showToast(on ? '已打开敌人路线：休整期在棋盘上画本回合路线' : '已关闭敌人路线')
+  }
+  let openType = $state<string | null>(null)
+  // 手动选的游戏主题和画面认到的不一致时提醒（任务 330：画面是乌萨斯、设成终端，商店整帧读空）；关掉后同一个认到的主题不再提醒
+  const THEME_NAMES = { terminal: '卫戍协议终端', ursus: '乌萨斯齐心团', closure: '「全能的」可露希尔' } as const
+  let themeDismissed = $state<string | null>(null)
+  const seenTheme = $derived(app.connection.theme)
+  const themeMismatch = $derived(!app.settings.gameThemeAuto && !!seenTheme && seenTheme !== app.settings.gameTheme && themeDismissed !== seenTheme)
+  const autoTheme = () => {
+    app.settings.gameThemeAuto = true
+    app.saveSettings()
+    app.showToast('已改成自动识别游戏主题')
+  }
+  const setRoutes = (patch: Partial<typeof app.settings.routes>) => {
+    app.settings.routes = { ...app.settings.routes, ...patch }
+    app.saveSettings()
+  }
+  // 右键菜单：常用的几项直接在这里改，其余去设置页
+  const routeMenu = () => {
+    const r = app.settings.routes
+    const pick = <K extends keyof typeof r>(k: K, v: (typeof r)[K], label: string) => ({ label, on: r[k] === v, run: () => setRoutes({ [k]: v }) })
+    return {
+      title: '敌人路线',
+      sub: r.enabled ? '休整期画在游戏棋盘上' : '现在关着',
+      items: [
+        { label: '显示路线', on: r.enabled, run: () => toggleRoutes(!r.enabled) },
+        'sep' as const,
+        pick('display', 'always', '显示：一直显示'),
+        app.keysBlocked
+          ? { label: '显示：按住才显示（要管理员身份）', on: false, disabled: true, run: () => {} }
+          : pick('display', 'hold', `显示：按住 ${r.hotkey} 才显示`),
+        pick('display', 'peek', '显示：新回合先看几秒'),
+        'sep' as const,
+        pick('overlap', 'cycle', '路线多时：依次循环'),
+        pick('overlap', 'all', '路线多时：全部一起'),
+        'sep' as const,
+        pick('fly', 'main', '飞行：只显示最多的一条'),
+        pick('fly', 'all', '飞行：全部'),
+        pick('fly', 'off', '飞行：不显示'),
+        'sep' as const,
+        pick('side', 'auto', '联机首领：自动'),
+        pick('side', 'left', '联机首领：我在左侧'),
+        pick('side', 'right', '联机首领：我在右侧'),
+        'sep' as const,
+        { label: '更多设置…', icon: 'settings' as const, run: () => (app.settingsOpen = true) },
+      ],
+    }
+  }
+  const strategy = $derived(app.catalog.strategies.find((s) => s.id === m.strategyId))
+  // 策略识别不了（v0.7.0），用户自己选：资金预测和学习要看策略
+  let pickingSt = $state(false)
+  let stq = $state('')
+  const pickSt = (id: string) => {
+    app.setMatchStrategy(id === m.strategyId ? null : id)
+    pickingSt = false
+    stq = ''
+  }
+  // 开局选策略推荐（决策 S2）：没选策略时列前 3 个；选了之后在策略卡上标名次。数值是复刻里机器人打的估计
+  const advice = $derived(m.strategyAdvice?.status === 'ok' ? m.strategyAdvice : null)
+  const adviceMap = $derived(advice ? new Map(advice.items.map((x, i) => [x.strategyId, { clearRate: x.clearRate, rank: i + 1 }])) : null)
+  const topAdvice = $derived(
+    advice?.items.slice(0, 3).map((x) => ({ ...x, s: app.catalog.strategies.find((s) => s.id === x.strategyId) })).filter((x) => x.s) ?? [],
+  )
+  // 单人宿主给「规程等级16」，多人给整句「按单人规程等级 9～14 平均估」
+  const basisText = (b: string) => (b.startsWith('按') ? b : `按${b}估`)
+  const pct = (v: number) => `${Math.round(v * 100)}%`
+  const diff = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(Math.round(v * 100))}%`
+  let adviceWhy = $state(false)
+  // 机变推荐（任务 373）：按画面从左到右列卡，推荐的那张亮起来；认不出的卡占位不排名。没有推荐（模型没过关、认不出）时整块不显示
+  const adapt = $derived(m.adaptAdvice)
+  const ADAPT_FAMILY = { bounty: '悬赏决策', supply: '道具补给', shop: '机密商店', tactic: '战术决策' } as const
+  const adaptPos = (i: number, n: number) => (n === 3 ? ['左', '中', '右'][i] : String(i + 1))
+  const adaptAvg = $derived.by(() => {
+    const r = adapt?.cards.filter((c) => c.clearRate !== null).map((c) => c.clearRate!) ?? []
+    return r.length ? r.reduce((a, b) => a + b, 0) / r.length : 0
+  })
+  let adaptWhy = $state(false)
+  // 目标阵容固定排第一个（不管本局合不合适，方便对照）；其余按目标盟约里阵容不完整的个数、再按名单被禁人数排序，一共取 3 套
+  // 工作台里够宽就排成三栏（宽度按页面自己量，侧栏里不会触发）
+  let pageW = $state(0)
+  const wide = $derived(app.workbench && pageW >= 960)
+  const usable = $derived(
+    app.lineups
+      .map((l) => ({ l, bad: app.session.targetLineupId === l.id ? -Infinity : app.lineupPenalty(l) }))
+      .sort((a, b) => a.bad - b.bad)
+      .slice(0, 3),
+  )
+
+  // 特别关注：本局阵容不完整的关注盟约、被禁的关注干员
+  const focusCovsHit = $derived(app.settings.focusCovenants.filter((id) => app.matchCovenant(id)?.incomplete))
+  const focusOpsHit = $derived(app.settings.focusOperators.filter((n) => app.banned.has(n)))
+  const focusTotal = $derived(app.settings.focusCovenants.length + app.settings.focusOperators.length)
+  // 提醒可以关掉：记下本局指纹（哪些盟约阵容不完整、首领、模式，同一局里基本不变）和关掉时被影响的项。
+  // 换了一局，或者又有新的关注项被影响，就重新提醒
+  const DISMISS_KEY = 'sa_focus_dismissed'
+  const matchPrint = $derived([m.covenants.filter((c) => c.incomplete).map((c) => c.id).sort().join(','), m.bossId, m.mode?.id].join('|'))
+  const focusHits = $derived([...focusCovsHit, ...focusOpsHit])
+  let dismissed = $state<{ match: string; hits: string[] }>(JSON.parse(localStorage.getItem(DISMISS_KEY) ?? 'null') ?? { match: '', hits: [] })
+  const focusDismissed = $derived(dismissed.match === matchPrint && focusHits.every((h) => dismissed.hits.includes(h)))
+  const dismissFocus = () => {
+    dismissed = { match: matchPrint, hits: focusHits }
+    localStorage.setItem(DISMISS_KEY, JSON.stringify(dismissed))
+  }
+  const edit = $derived(app.matchEdit)
+  // 清空本局要点两次：第一次变成「确认清空」，3 秒内不点就恢复
+  let armReset = $state(false)
+  let armTimer = 0
+  const reset = () => {
+    if (!armReset) {
+      armReset = true
+      armTimer = window.setTimeout(() => (armReset = false), 3000)
+      return
+    }
+    clearTimeout(armTimer)
+    armReset = false
+    app.resetMatch()
+  }
+  const tapCov = (id: string) => (edit ? app.toggleCovenantIncomplete(id) : (app.detail = { kind: 'covenant', id }))
+
+  const ago = $derived.by(() => {
+    if (!m.recognizedAt) return ''
+    const min = Math.round((Date.now() - new Date(m.recognizedAt).getTime()) / 60000)
+    return min < 1 ? '刚刚' : `${min} 分钟前`
+  })
+  const incompleteCount = (list: typeof core) => list.filter((c) => c.incomplete).length
+
+  // 分组可折叠，状态记在本机；修正时盟约和禁用干员总是展开
+  const open = (key: string, forceOpen = false) => forceOpen || !app.folded[`match.${key}`]
+  const fold = (key: string) => () => app.toggleFold(`match.${key}`)
+  const sl = { duration: 200, easing: cubicOut }
+
+  // 禁用干员仿游戏按盟约分组：先不完整的核心盟约，再不完整的附加盟约。和游戏一样，
+  // 干员属于多个不完整盟约时在每组都出现，组内按星级从高到低，方便和游戏画面逐个核对。
+  // 不属于任何不完整盟约的（手动禁用等）归「其他」，放最后。每个盟约组末尾有「添加」格，点开只列这个盟约的干员；
+  // 没有任何阵容不完整的盟约时，只剩一个「手动添加」组，点开列全部。
+  const rank = new Map(app.catalog.operators.map((o, i) => [o.name, i]))
+  const byTier = (a: string, b: string) => app.op(b).tier - app.op(a).tier || rank.get(a)! - rank.get(b)!
+  // 自选干员会被规则禁用（商店标记、详情照常按禁用算），但游戏的禁用列表里不显示它们，这里也不进分组和人数
+  // 本局读到「确定自选编队」或读过物资调配页时，只算可能出现的自选干员（docs/design.md「本局盟约里的自选干员」）
+  const pool = $derived(diyPool())
+  const diyBanned = $derived(m.bannedOperators.filter((n) => app.op(n).diy && (!pool || pool.names.has(n))))
+  const listedBans = $derived(m.bannedOperators.filter((n) => !app.op(n).diy).length)
+  const bannedGroups = $derived.by(() => {
+    const banned = m.bannedOperators.filter((n) => !app.op(n).diy)
+    const groups: { id: string | null; names: string[] }[] = [
+      ...core.filter((c) => c.incomplete).map((c) => ({ id: c.id, names: banned.filter((n) => app.op(n).core.includes(c.id)) })),
+      ...extra.filter((c) => c.incomplete).map((c) => ({ id: c.id, names: banned.filter((n) => app.op(n).extra.includes(c.id)) })),
+    ]
+    const shown = new Set(groups.flatMap((g) => g.names))
+    const rest = banned.filter((n) => !shown.has(n))
+    if (rest.length || !groups.length) groups.push({ id: null, names: rest })
+    return groups.map((g) => {
+      // 识别过的组按游戏里的格子排：认出的、推测的、没认出的问号格各在原位；手动加的、推算出的其余禁用接在后面
+      const bg = g.id ? m.banGroups.find((b) => b.covenant === g.id) : undefined
+      const inSlots = new Set(bg?.slots.map((s) => s.name) ?? [])
+      const cells: Cell[] = [
+        ...(bg?.slots.map((s, i): Cell => (s.name ? { kind: 'op', name: s.name, inferred: !!s.inferred, i } : { kind: 'unknown', i, tier: s.tier, n: s.candidates.length })) ?? []),
+        ...g.names.filter((n) => !inSlots.has(n)).sort(byTier).map((name): Cell => ({ kind: 'op', name, inferred: false, i: -1 })),
+      ]
+      const pos = (pred: (s: NonNullable<typeof bg>['slots'][number]) => boolean) => bg?.slots.flatMap((s, i) => (pred(s) ? [i + 1] : [])) ?? []
+      return { id: g.id, count: g.names.length, cells, missing: pos((s) => !s.name), guessed: pos((s) => !!s.inferred), more: !!bg && !bg.complete }
+    })
+  })
+  type Cell = { kind: 'op'; name: string; inferred: boolean; i: number } | { kind: 'unknown'; i: number; tier: number; n: number }
+  const nth = (xs: number[]) => `第 ${xs.join('、')} 格`
+</script>
+
+{#snippet bInfo()}
+  <EconomyBar />
+  {#if m.awaitingDetail}
+    <div class="solo-guide">
+      <div class="sg-h">单人模式 · 开局页不识别</div>
+      <p>单人开局要在两组核心盟约里选一组，选完才算数，所以到对局里再读。</p>
+      <ol>
+        <li>选好盟约，点「准备就绪」进入对局</li>
+        <li>点顶部回合数左边的 <span class="key"><Icon name="search" size={11} /></span> 打开对局详情</li>
+        <li>会自动识别，禁用干员按盟约算全，不用往下翻</li>
+      </ol>
+      <p class="sg-f">每局只自动识别这一次，之后再打开详情不会自动开始，要补读点「重新识别」。</p>
+    </div>
+  {/if}
+  {#if app.scanNote?.message && !app.scanNote.ok}
+    <!-- 识别失败（v0.7.2）：醒目的提示，详情里是技术细节；识别不了的问题很常见，直接给导出诊断包 -->
+    <ErrorNote title="识别没成功" error={app.scanNote.message} context={{ 游戏来源: app.connection.source ?? '—', 画面: app.connection.resolution ?? '—' }} onclose={() => (app.scanNote = null)}>
+      {#snippet actions()}
+        <button disabled={app.scanning} onclick={() => app.rescan()}><Icon name="refresh" size={12} />重新识别</button>
+        <button onclick={exportDiag}><Icon name="download" size={12} />导出诊断包</button>
+      {/snippet}
+    </ErrorNote>
+  {:else if app.scanNote?.message}
+    <div class="note">
+      <span>{app.scanNote.message}</span>
+      <button class="nx" aria-label="关闭提示" onclick={() => (app.scanNote = null)}><Icon name="close" size={13} /></button>
+    </div>
+  {/if}
+  {#if themeMismatch && seenTheme}
+    <div class="note warn">
+      <span
+        >游戏画面是{THEME_NAMES[seenTheme]}主题，设置里选的是{THEME_NAMES[app.settings.gameTheme]}，商店和场上会读不准。<button class="lk" onclick={autoTheme}
+          >改成自动识别</button
+        ></span
+      >
+      <button class="nx" title="不改，这个主题不再提醒" aria-label="关闭提示" onclick={() => (themeDismissed = seenTheme)}><Icon name="close" size={13} /></button>
+    </div>
+  {/if}
+  {#if edit}
+    <div class="edithint">点盟约切换「可用 / 阵容不完整」，禁用干员会跟着重新推算；点禁用干员可解除，漏掉的点各组末尾的「添加」补上。不进修正，直接右键盟约或干员也能改。</div>
+  {/if}
+
+  {#if focusTotal && m.source !== 'none'}
+    {#if focusHits.length && !focusDismissed}
+      <div class="focus bad">
+        <span class="fh"
+          ><Icon name="heartFill" size={13} />关注的被影响了<button class="nx" title="这一局不再提醒，新的一局或又有关注的被影响时再提醒" aria-label="关闭提醒" onclick={dismissFocus}
+            ><Icon name="close" size={13} /></button
+          ></span
+        >
+        <div class="fl">
+          {#each focusCovsHit as id (id)}
+            <button class="fc" onclick={() => (app.detail = { kind: 'covenant', id })}>
+              <BondIcon id={id} size={22} incomplete />{app.cov(id).name}<em>阵容不完整</em>
+            </button>
+          {/each}
+          {#each focusOpsHit as n (n)}
+            <OpTile name={n} size={32} showName={false} banLook={false} onclick={() => (app.detail = { kind: 'operator', name: n })} />
+          {/each}
+        </div>
+      </div>
+    {:else if !focusHits.length}
+      <div class="focus ok"><Icon name="heartFill" size={13} />关注的 {app.settings.focusCovenants.length} 个盟约、{app.settings.focusOperators.length} 名干员本局都可用</div>
+    {/if}
+  {/if}
+{/snippet}
+
+{#snippet bStrategy()}
+  {#if pickingSt}
+    <div class="stpick">
+      <div class="sph">
+        <b>选本局策略</b>
+        <input bind:value={stq} placeholder="搜名字、发起者、效果" />
+        <button class="tool" onclick={() => ((pickingSt = false), (stq = ''))}>取消</button>
+      </div>
+      <StrategyGrid selected={m.strategyId} q={stq} onpick={pickSt} advice={adviceMap} />
+    </div>
+  {:else if strategy}
+    <!-- 整块可点：点一下换策略（用户 2026-11-13：只有一个「换」字太没设计，直接做成可点的） -->
+    <button class="strategy" title="点一下换策略" onclick={() => (pickingSt = true)}>
+      <img src={asset.strategy(strategy.id)} alt="" />
+      <div>
+        <div class="sn">
+          <b>{strategy.name}</b><span>{strategy.initiator}</span>{#if m.strategySource === 'recognized'}<em class="auto">自动识别</em>{/if}
+          {#if adviceMap?.has(strategy.id)}{@const a = adviceMap.get(strategy.id)!}<em class="rk">推荐第 {a.rank} · 预计通关 {pct(a.clearRate)}</em>{/if}
+        </div>
+        <p>{strategy.description}</p>
+      </div>
+    </button>
+  {:else if advice && topAdvice.length}
+    <div class="advice">
+      <div class="ah">
+        <b>推荐策略</b><span>{basisText(advice.basis)}</span>
+        <button class="tool" onclick={() => (pickingSt = true)}>全部策略</button>
+      </div>
+      {#each topAdvice as x, i (x.strategyId)}
+        <button class="arow" title="选这个策略" onclick={() => pickSt(x.strategyId)}>
+          <i class="no">{i + 1}</i>
+          <img src={asset.strategy(x.strategyId)} alt="" />
+          <div class="an"><b>{x.s!.name}</b><span>{x.s!.initiator}</span></div>
+          <div class="av">
+            <b>{pct(x.clearRate)}</b><em>预计通关 · {diff(x.clearRate - advice.average.clearRate)}</em>
+            <span>撑到第 {x.reachedRound.toFixed(1)} 回合</span>
+          </div>
+        </button>
+      {/each}
+      <button class="why" onclick={() => (adviceWhy = !adviceWhy)}>
+        <Icon name={adviceWhy ? 'arrowUp' : 'arrowDown'} size={12} />怎么估的
+      </button>
+      {#if adviceWhy}
+        <ul class="wl" transition:slide={sl}>
+          <li>平均：预计通关 {pct(advice.average.clearRate)}，撑到第 {advice.average.reachedRound.toFixed(1)} 回合</li>
+          {#each advice.assumptions as t (t)}<li>{t}</li>{/each}
+        </ul>
+      {/if}
+    </div>
+  {:else if m.source !== 'none'}
+    <button class="stnone" onclick={() => (pickingSt = true)}>
+      <Icon name="add" size={14} />选本局策略<em>{m.strategyAdvice?.status === 'unavailable' ? `没有推荐：${m.strategyAdvice.reason}` : '进了对局会自动认出，也可以先自己选；资金预测会按策略算'}</em>
+    </button>
+  {/if}
+{/snippet}
+
+{#snippet bAdapt()}
+  {#if adapt?.status === 'ok'}
+    <div class="advice adapt">
+      <div class="ah">
+        <b>机变推荐</b><span>第 {adapt.round} 回合{adapt.family ? ` · ${ADAPT_FAMILY[adapt.family]}` : ''} · {basisText(adapt.basis)}</span>
+      </div>
+      {#each adapt.cards as c (c.index)}
+        <div class="arow" class:best={c.rank === 1} class:unk={c.rank === null}>
+          <i class="no" title="画面上的位置">{adaptPos(c.index, adapt.cards.length)}</i>
+          <div class="an">
+            <b>{c.name ?? '没认出这张卡'}{#if c.rank === 1}<em class="pick">推荐</em>{/if}</b>
+            {#if c.desc}<span class="ad">{c.desc}</span>{/if}
+          </div>
+          {#if c.clearRate !== null}
+            <div class="av">
+              <b>{pct(c.clearRate)}</b><em>预计通关 · {diff(c.clearRate - adaptAvg)}</em>
+              {#if c.reachedRound !== null}<span>撑到第 {c.reachedRound.toFixed(1)} 回合</span>{/if}
+            </div>
+          {/if}
+        </div>
+      {/each}
+      <button class="why" onclick={() => (adaptWhy = !adaptWhy)}>
+        <Icon name={adaptWhy ? 'arrowUp' : 'arrowDown'} size={12} />怎么估的
+      </button>
+      {#if adaptWhy}
+        <ul class="wl" transition:slide={sl}>
+          <li>「预计通关」后面是比这几张卡的平均高或低多少</li>
+          {#each adapt.assumptions as t (t)}<li>{t}</li>{/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet bCore()}
+  <section>
+    <SectionHeader
+      title="核心盟约"
+      tag={incompleteCount(core) ? `${incompleteCount(core)} 个阵容不完整` : undefined}
+      ontoggle={edit ? undefined : fold('core')}
+      folded={!open('core', edit)}
+    >
+      {#snippet icon()}
+        <img src={asset.stage('img_title_icon_temp_bond')} alt="" class="ti" />
+      {/snippet}
+    </SectionHeader>
+    {#if open('core', edit)}
+      <div class="grid" class:editing={edit} transition:slide={sl}>
+        {#each core as c (c.id)}
+          <BondIcon id={c.id} size={42} on={!c.incomplete} incomplete={c.incomplete} name onclick={() => tapCov(c.id)} />
+        {/each}
+      </div>
+    {/if}
+  </section>
+{/snippet}
+
+{#snippet bExtra()}
+  <section>
+    <SectionHeader
+      title="附加盟约"
+      tag={incompleteCount(extra) ? `${incompleteCount(extra)} 个阵容不完整` : undefined}
+      ontoggle={edit ? undefined : fold('extra')}
+      folded={!open('extra', edit)}
+    >
+      {#snippet icon()}
+        <img src={asset.stage('img_title_icon_perm_bond')} alt="" class="ti" />
+      {/snippet}
+    </SectionHeader>
+    {#if open('extra', edit)}
+      <div class="grid" class:editing={edit} transition:slide={sl}>
+        {#each extra as c (c.id)}
+          <BondIcon id={c.id} size={42} on={!c.incomplete} incomplete={c.incomplete} name onclick={() => tapCov(c.id)} />
+        {/each}
+      </div>
+    {/if}
+  </section>
+{/snippet}
+
+{#snippet bBanned()}
+  <section>
+    <SectionHeader
+      title="本局禁用干员"
+      tag="{listedBans} 名"
+      tagTone="warn"
+      ontoggle={edit ? undefined : fold('banned')}
+      folded={!open('banned', edit)}
+    >
+      {#snippet icon()}
+        <img src={asset.stage('img_title_icon_chess')} alt="" class="ti" />
+      {/snippet}
+    </SectionHeader>
+    {#if open('banned', edit)}
+      <div class="banned" class:editing={edit} transition:slide={sl}>
+        {#each bannedGroups as g (g.id ?? '')}
+          <div class="bg">
+            <div class="bgh">
+              {#if g.id}
+                <BondIcon id={g.id} size={20} />
+                <b>{app.cov(g.id).name}</b>
+              {:else}
+                <b>{g.count ? '其他' : '手动添加'}</b>
+              {/if}
+              <span>{g.count}</span>
+              <!-- 识别的格位：第几格没认出、哪格是推测、这组还没看到结尾 -->
+              {#if g.missing.length}<em class="miss">{nth(g.missing)}没认出</em>{/if}
+              {#if g.guessed.length}<em class="guess">{nth(g.guessed)}是推测</em>{/if}
+              {#if g.more}<em class="more" title="游戏里这一组没看到结尾；其余的按盟约规则算出来，接在后面">往下还有</em>{/if}
+            </div>
+            <div class="tiles">
+              <!-- 格位按位置做 key：合并多屏识别时同组两格可能认成同一个干员，按名字做 key 会重复、整页渲染失败 -->
+              {#each g.cells as c (c.kind === 'op' && c.i < 0 ? c.name : `s${c.i}`)}
+                {#if c.kind === 'unknown'}
+                  <button
+                    class="slot"
+                    style:--c="var(--tier-{c.tier})"
+                    onclick={() => (app.banPicker = { cov: g.id!, slot: c.i })}
+                    oncontextmenu={(ev) => openMenu(ev, slotMenu(g.id!, c.i))}
+                    title="第 {c.i + 1} 格没认出（{ROMAN[c.tier]} 阶）{c.n ? `，有 ${c.n} 个候选，点开选` : '，点开手动补'}"
+                  >
+                    <span class="q"><b>?</b><i class="term">{ROMAN[c.tier]}</i></span>
+                    <span class="nm">第 {c.i + 1} 格</span>
+                  </button>
+                {:else if c.inferred}
+                  <span class="inf">
+                    <OpTile name={c.name} size={42} onclick={(e) => openMenu(e, operatorMenu(c.name))} />
+                    <em>推测</em>
+                  </span>
+                {:else}
+                  <OpTile name={c.name} size={42} banLook={false} onclick={() => (edit ? app.toggleBanned(c.name) : (app.detail = { kind: 'operator', name: c.name }))} />
+                {/if}
+              {/each}
+              {#if g.id || !g.count}
+                <button class="addtile" onclick={() => (app.banPicker = g.id ?? true)} title={g.id ? `补上${app.cov(g.id).name}里识别漏掉的禁用干员` : '手动添加禁用干员'}>
+                  <span class="plus"><Icon name="add" size={20} /></span>
+                  <span class="nm">添加</span>
+                </button>
+              {/if}
+            </div>
+          </div>
+        {/each}
+        {#if diyBanned.length}
+          <p class="rule">另有 {diyBanned.length} 名{pool ? '你自选编队里的' : ''}自选干员按规则被禁，游戏的禁用列表里不显示，在「确定自选编队」页能看到。</p>
+        {/if}
+      </div>
+    {/if}
+  </section>
+{/snippet}
+
+{#snippet bEnemy()}
+  <section>
+    <SectionHeader title="敌方情报" en="HOSTILE INTEL" ontoggle={fold('enemy')} folded={!open('enemy')}>
+      {#snippet icon()}
+        <img src={asset.stage('img_title_icon_enemy')} alt="" class="ti" />
+      {/snippet}
+      {#snippet right()}
+        <!-- 敌人路线：左键开关，右键改显示方式等（和设置「敌人路线」是同一组设置）。按钮要直接放在标题栏里，才能盖过折叠点击层 -->
+        <button class="rbtn" class:on={app.settings.routes.enabled} onclick={() => toggleRoutes(!app.settings.routes.enabled)}
+          oncontextmenu={(e) => openMenu(e, routeMenu())} title="在游戏棋盘上画本回合敌人会走的路线。左键开关，右键改显示方式">
+          <i></i>路线{app.settings.routes.enabled ? '开' : '关'}
+        </button>
+      {/snippet}
+    </SectionHeader>
+    {#if open('enemy')}
+    <div class="enemy" transition:slide={sl}>
+      <RoundEnemyList />
+      {#if boss}
+        <button class="boss" onclick={() => (app.detail = { kind: 'boss', id: boss.id })}>
+          <span class="bpic"><img src={asset.boss(boss.id)} alt="" /></span>
+          <span class="binfo">
+            <span class="leader">敌方领袖</span>
+            <b>{boss.name}</b>
+            {#if bossHp}<span class="bhp">{m.mode!.name} · 血量 <b>{fmtHp(bossHp.hp)}</b>{#if bossHp.coreHp} · 隐秘核心 <b>{fmtHp(bossHp.coreHp)}</b>{/if}</span>{/if}
+          </span>
+          <span class="more term">Detail<Icon name="arrowRight" size={12} /></span>
+        </button>
+      {/if}
+      {#each m.enemyTypes as code (code)}
+        {@const t = app.catalog.enemyTypes.find((x) => x.code === code)!}
+        <!-- 点开看这种特训敌人前半段、后半段各可能是谁（一局里各随机出一种） -->
+        <button class="etype" class:open={openType === code} onclick={() => (openType = openType === code ? null : code)} aria-expanded={openType === code}>
+          <span class="ei"><img src={asset.enemyType(code)} alt="" /></span>
+          <span class="en">特训敌人 · {t.name}</span>
+          <span class="ex"><Icon name="arrowDown" size={14} /></span>
+        </button>
+        {#if openType === code}
+          <div class="variants" transition:slide={sl}>
+            {#each [{ label: '前半段', list: t.firstHalf }, { label: '后半段', list: t.secondHalf }] as half (half.label)}
+              {@const total = half.list.reduce((s, v) => s + v.weight, 0)}
+              <div class="vhalf">
+                <span class="vlabel">{half.label}<small>随机一种</small></span>
+                <div class="vgrid">
+                  {#each half.list as v (v.id)}
+                    <button class="vitem" title="{v.name}：点开看资料" onclick={() => (app.detail = { kind: 'enemy', id: v.id })}>
+                      <span class="vimg"><img src={asset.enemy(v.id)} alt="" onerror={(e) => e.currentTarget.classList.add('miss')} /><b>{v.name.slice(0, 1)}</b></span>
+                      <span class="vname">{v.name}</span>
+                      <span class="vp">{Math.round((v.weight / total) * 100)}%</span>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      {/each}
+    </div>
+    {/if}
+  </section>
+{/snippet}
+
+{#snippet bLineups()}
+  <section>
+    <SectionHeader title="本局可用阵容" en="LINEUP PLANNER" ontoggle={fold('lineups')} folded={!open('lineups')}>
+      {#snippet icon()}
+        <Icon name="grid" size={18} />
+      {/snippet}
+      {#snippet right()}
+        <button class="hbtn" onclick={() => (app.setTab('lineup'), app.edit(null))}><Icon name="add" size={14} />新建阵容</button>
+      {/snippet}
+    </SectionHeader>
+    {#if open('lineups')}
+    <div class="recs" transition:slide={sl}>
+      {#each usable as { l } (l.id)}
+        {@const isT = app.session.targetLineupId === l.id}
+        <LineupCard lineup={l} target={isT}>
+          {#snippet actions()}
+            {#if !isT}<button class="act" onclick={() => app.setTarget(l.id)}>设为目标</button>{/if}
+          {/snippet}
+        </LineupCard>
+      {/each}
+      <button class="all" onclick={() => (app.setTab('lineup'), (app.lineupView = 'mine'))}>我的阵容<Icon name="arrowRight" size={14} /></button>
+    </div>
+    {/if}
+  </section>
+{/snippet}
+
+<div class="page" class:wide bind:clientWidth={pageW}>
+  <div class="status">
+    <span class="st" class:ok={m.source !== 'none'}>
+      <span class="term">Info</span>
+      {m.source === 'recognized' ? '已识别' : m.source === 'manual' ? '已修正' : m.awaitingDetail ? '等对局详情' : '未识别'}
+      {#if m.solo}<b class="solo">单人</b>{/if}
+      <em>{ago}</em>
+    </span>
+    <span class="tools">
+      <button class="tool" class:on={edit} onclick={() => (app.matchEdit = !edit)}>
+        <Icon name="pencil" size={13} />{edit ? '完成' : '修正'}
+      </button>
+      <button class="tool" class:busy={app.scanning} onclick={() => app.rescan()} disabled={app.scanning}>
+        <span class="spin"><Icon name="refresh" size={13} /></span>
+        {app.scanning ? '识别中…' : '重新识别'}
+      </button>
+      {#if m.source !== 'none'}
+        <button
+          class="tool"
+          class:arm={armReset}
+          onclick={reset}
+          disabled={app.scanning}
+          title="清掉本局的盟约、禁用干员、首领等信息；打完一局编辑阵容时用"
+        >
+          <Icon name={armReset ? 'trash' : 'close'} size={13} />{armReset ? '确认清空' : '清空'}
+        </button>
+      {/if}
+    </span>
+  </div>
+  {#if wide}
+    <!-- 工作台：三栏一屏放下。左：盟约；中：资金、提醒、策略、敌方情报、禁用；右：本局可用阵容 -->
+    <div class="cols">
+      <div class="col">{@render bCore()}{@render bExtra()}<BondStatus /></div>
+      <div class="col">{@render bInfo()}{@render bStrategy()}{@render bAdapt()}<FieldBoard />{@render bEnemy()}{@render bBanned()}</div>
+      <div class="col">{@render bLineups()}</div>
+    </div>
+  {:else}
+    {@render bInfo()}
+    {@render bStrategy()}
+    {@render bAdapt()}
+    <FieldBoard />
+    {@render bCore()}
+    {@render bExtra()}
+    <BondStatus />
+    {@render bBanned()}
+    {@render bEnemy()}
+    {@render bLineups()}
+  {/if}
+</div>
+
+<style>
+  .page {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 10px 10px 24px;
+  }
+  /* 侧栏窄时按钮整组换到第二行靠右，不和状态文字叠在一起 */
+  .status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 4px;
+    font-size: var(--fs-base);
+  }
+  .st {
+    min-width: 0;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fg-2);
+  }
+  .st .term {
+    font-size: var(--fs-2xs);
+    padding: 2px 4px 1px;
+    color: var(--bg-0);
+    background: var(--fg-4);
+  }
+  .st.ok .term {
+    background: var(--mint);
+  }
+  .st .solo {
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-bold);
+    padding: 1px 5px;
+    color: var(--gold);
+    box-shadow: inset 0 0 0 1px rgb(var(--gold-rgb) / 0.5);
+  }
+  .solo-guide {
+    font-size: var(--fs-base);
+    line-height: 1.55;
+    color: var(--fg-2);
+    padding: 8px 10px 8px 12px;
+    background: rgb(var(--gold-rgb) / 0.07);
+    box-shadow: inset var(--edge) 0 0 var(--gold);
+  }
+  .sg-h {
+    font-weight: var(--fw-bold);
+    color: var(--gold);
+    margin-bottom: 2px;
+  }
+  .solo-guide p {
+    margin: 0;
+  }
+  .solo-guide ol {
+    margin: 6px 0;
+    padding-left: 18px;
+    color: var(--fg-1);
+  }
+  .solo-guide li::marker {
+    color: var(--gold);
+    font-weight: var(--fw-bold);
+  }
+  .key {
+    display: inline-grid;
+    place-items: center;
+    width: 22px;
+    height: 16px;
+    vertical-align: -3px;
+    color: var(--mint);
+    border-radius: var(--r-pill);
+    box-shadow: inset 0 0 0 1px var(--mint);
+  }
+  .sg-f {
+    font-size: var(--fs-sm);
+    color: var(--fg-3);
+  }
+  .st em {
+    font-style: normal;
+    color: var(--fg-4);
+  }
+  .tools {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .tool {
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--fs-base);
+    color: var(--fg-2);
+    padding: 3px 7px;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .tool:hover {
+    color: var(--fg-1);
+    box-shadow: inset 0 0 0 1px var(--fg-3);
+  }
+  .tool:disabled {
+    opacity: 0.45;
+  }
+  .tool.arm {
+    color: var(--fg-0);
+    background: var(--red);
+    box-shadow: none;
+  }
+  .tool.on {
+    color: var(--mint-ink);
+    background: var(--mint);
+    box-shadow: none;
+  }
+  .note {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: var(--fs-base);
+    line-height: 1.5;
+    color: var(--mint);
+    padding: 6px 8px;
+    background: var(--mint-tint);
+    box-shadow: inset var(--edge) 0 0 var(--mint);
+  }
+  .note span {
+    flex: 1;
+  }
+  .note.warn {
+    color: var(--gold);
+    background: rgb(var(--gold-rgb) / 0.08);
+    box-shadow: inset var(--edge) 0 0 var(--gold);
+  }
+  .lk {
+    color: inherit;
+    font-weight: var(--fw-bold);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    margin-left: 2px;
+  }
+  .nx {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    margin: -1px -4px 0 0;
+    display: grid;
+    place-items: center;
+    color: inherit;
+    opacity: 0.6;
+  }
+  .nx:hover {
+    opacity: 1;
+    background: rgb(var(--hl-rgb) / 0.08);
+  }
+  .focus {
+    display: flex;
+    gap: 6px;
+    font-size: var(--fs-base);
+    padding: 7px 8px;
+  }
+  .focus.ok {
+    align-items: center;
+    color: var(--gold);
+    background: rgb(var(--gold-rgb) / 0.08);
+    box-shadow: inset var(--edge) 0 0 var(--gold);
+  }
+  .focus.bad {
+    flex-direction: column;
+    color: var(--red-fg);
+    background: var(--red-tint);
+    box-shadow: inset var(--edge) 0 0 var(--red);
+  }
+  .fh {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: var(--fw-bold);
+  }
+  .fh .nx {
+    margin: -2px -4px -2px auto;
+  }
+  .fl {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+  }
+  .fc {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--fg-1);
+  }
+  /* 「阵容不完整」角标往右伸出约 9px，给它留出位置，不压住盟约名 */
+  .fc > :global(.bond) {
+    margin-right: 8px;
+  }
+  .fc em {
+    font-style: normal;
+    font-size: var(--fs-sm);
+    color: var(--red);
+  }
+  .edithint {
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    color: var(--mint);
+    padding: 6px 8px;
+    background: var(--mint-tint);
+    box-shadow: inset var(--edge) 0 0 var(--mint);
+  }
+  .editing {
+    outline: 1px dashed rgb(var(--mint-rgb) / 0.45);
+    outline-offset: -1px;
+  }
+  .hbtn {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: var(--fs-base);
+    color: var(--mint);
+    padding: 3px 4px;
+  }
+  .hbtn:hover {
+    color: var(--mint-hi);
+  }
+  .spin {
+    display: grid;
+  }
+  .tool.busy .spin {
+    animation: spin var(--t-spin) linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .stpick {
+    margin-bottom: 8px;
+    padding: 8px;
+    background: var(--bg-1);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .sph {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .sph b {
+    flex: none;
+    font-size: var(--fs-md);
+  }
+  .sph input {
+    flex: 1;
+    min-width: 0;
+    height: 26px;
+    padding: 0 8px;
+    font-size: var(--fs-base);
+    color: var(--fg-1);
+    background: var(--bg-0);
+    border: 1px solid var(--line);
+  }
+  .stnone {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    padding: 8px 9px;
+    font-size: var(--fs-md);
+    color: var(--fg-2);
+    border: 1px dashed var(--line);
+  }
+  .stnone:hover {
+    color: var(--fg-1);
+    border-color: var(--fg-4);
+  }
+  .stnone em {
+    font-style: normal;
+    font-size: var(--fs-sm);
+    color: var(--fg-4);
+  }
+  .strategy {
+    display: flex;
+    gap: 9px;
+    align-items: center;
+    width: 100%;
+    padding: 7px 9px;
+    text-align: left;
+    background: var(--hatch), var(--bg-1);
+    box-shadow: inset 0 0 0 1px var(--line-soft);
+    transition: box-shadow var(--t-fast), background var(--t-fast);
+  }
+  .strategy:hover {
+    background: var(--hatch), var(--bg-2);
+    box-shadow: inset 0 0 0 1px var(--mint);
+  }
+  .strategy img {
+    width: 38px;
+    height: 38px;
+    object-fit: cover;
+    flex: none;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  .sn {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+  }
+  .sn b {
+    font-size: var(--fs-md);
+  }
+  .sn span {
+    font-size: var(--fs-sm);
+    color: var(--fg-3);
+  }
+  .sn .auto {
+    font-style: normal;
+    font-size: var(--fs-2xs);
+    color: var(--mint);
+    padding: 0 4px;
+    box-shadow: inset 0 0 0 1px rgb(var(--hl-rgb) / 0.35);
+  }
+  .sn .rk {
+    font-style: normal;
+    font-size: var(--fs-2xs);
+    color: var(--fg-2);
+    padding: 0 4px;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  /* 机变推荐：卡不可点（选卡在游戏里），推荐那张描青绿边 */
+  .adapt .arow {
+    cursor: default;
+  }
+  .adapt .arow:hover {
+    box-shadow: inset 0 0 0 1px var(--line-soft);
+  }
+  .adapt .arow.best {
+    box-shadow: inset 0 0 0 1px var(--mint-lo);
+    background: rgb(var(--mint-rgb) / 0.07);
+  }
+  .adapt .arow:first-of-type .no {
+    color: var(--fg-2);
+    background: none;
+  }
+  .adapt .arow.best .no {
+    color: var(--mint-ink);
+    background: var(--mint);
+  }
+  .adapt .arow.unk .an b {
+    color: var(--fg-3);
+    font-weight: normal;
+  }
+  .adapt .ad {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.4;
+  }
+  .pick {
+    font-style: normal;
+    font-size: var(--fs-2xs);
+    font-weight: normal;
+    margin-left: 6px;
+    padding: 0 4px;
+    color: var(--mint);
+    box-shadow: inset 0 0 0 1px var(--mint-lo);
+  }
+  .advice {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 7px 9px 5px;
+    background: var(--hatch), var(--bg-1);
+    box-shadow: inset 0 0 0 1px var(--line-soft);
+  }
+  .ah {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .ah b {
+    font-size: var(--fs-md);
+  }
+  .ah span {
+    flex: 1;
+    font-size: var(--fs-sm);
+    color: var(--fg-3);
+  }
+  .arow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 6px;
+    text-align: left;
+    background: rgb(var(--shade-rgb) / 0.18);
+    box-shadow: inset 0 0 0 1px var(--line-soft);
+  }
+  .arow:hover {
+    box-shadow: inset 0 0 0 1px var(--mint-lo);
+  }
+  .arow:first-of-type .no {
+    color: var(--mint-ink);
+    background: var(--mint);
+  }
+  .no {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    display: grid;
+    place-items: center;
+    font-style: normal;
+    font-size: var(--fs-2xs);
+    color: var(--fg-2);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .arow img {
+    width: 32px;
+    height: 32px;
+    object-fit: cover;
+    flex: none;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  .an {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .an b {
+    font-size: var(--fs-md);
+  }
+  .an span {
+    font-size: var(--fs-sm);
+    color: var(--fg-3);
+  }
+  .av {
+    display: grid;
+    grid-template-columns: auto auto;
+    column-gap: 5px;
+    align-items: baseline;
+    justify-items: end;
+    text-align: right;
+  }
+  .av b {
+    font-size: var(--fs-lg);
+    color: var(--mint);
+    font-variant-numeric: tabular-nums;
+  }
+  .av em {
+    font-style: normal;
+    font-size: var(--fs-2xs);
+    color: var(--fg-3);
+  }
+  .av span {
+    grid-column: 1 / -1;
+    font-size: var(--fs-2xs);
+    color: var(--fg-3);
+  }
+  .why {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: var(--fs-sm);
+    color: var(--fg-3);
+  }
+  .why:hover {
+    color: var(--fg-1);
+  }
+  .wl {
+    margin: 0;
+    padding: 0 0 2px 16px;
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    color: var(--fg-3);
+  }
+  .strategy p {
+    margin: 1px 0 0;
+    font-size: var(--fs-sm);
+    color: var(--fg-3);
+    line-height: 1.35;
+  }
+  section {
+    display: flex;
+    flex-direction: column;
+  }
+  .ti {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+    gap: 12px 2px;
+    padding: 14px 2px 6px;
+    justify-items: center;
+  }
+  .banned {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 4px 4px;
+  }
+  .bg {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .bgh {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--fs-base);
+    color: var(--fg-2);
+  }
+  .bgh span {
+    font-size: var(--fs-sm);
+    color: var(--fg-4);
+  }
+  .tiles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 6px;
+  }
+  .bgh em {
+    font-style: normal;
+    font-size: var(--fs-sm);
+    padding: 0 5px;
+  }
+  .bgh .miss {
+    color: var(--gold-ink);
+    background: var(--gold);
+  }
+  .bgh .guess {
+    color: var(--gold);
+    box-shadow: inset 0 0 0 1px rgb(var(--gold-rgb) / 0.5);
+  }
+  .bgh .more {
+    color: var(--fg-4);
+  }
+  /* 没认出的格：在游戏里的原位置放问号格，金色虚线框，底边是该格星级色，角上写星级 */
+  .slot {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    width: 42px;
+  }
+  .q {
+    position: relative;
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    background: rgb(var(--gold-rgb) / 0.08);
+    outline: 1px dashed var(--gold);
+    outline-offset: -1px;
+    box-shadow: inset 0 -2px 0 var(--c);
+    transition: background var(--t-fast);
+  }
+  .q b {
+    font-size: var(--fs-3xl);
+    line-height: 1;
+    color: var(--gold);
+  }
+  .q i {
+    position: absolute;
+    left: 2px;
+    bottom: 3px;
+    font-style: normal;
+    font-size: var(--fs-2xs);
+    color: var(--c);
+  }
+  .slot .nm {
+    font-size: var(--fs-sm);
+    color: var(--gold);
+  }
+  .slot:hover .q {
+    background: rgb(var(--gold-rgb) / 0.2);
+  }
+  /* 推测的格：头像照常，金色虚线框 + 名字下面的「推测」小签，点开确认或否认 */
+  .inf {
+    position: relative;
+    display: inline-flex;
+  }
+  .inf :global(.pic) {
+    outline: 1px dashed var(--gold);
+    outline-offset: 1px;
+  }
+  .inf em {
+    position: absolute;
+    left: 50%;
+    top: 30px;
+    transform: translateX(-50%);
+    z-index: 2;
+    font-style: normal;
+    font-size: var(--fs-2xs);
+    line-height: 12px;
+    padding: 0 3px;
+    white-space: nowrap;
+    color: var(--gold-ink);
+    background: var(--gold);
+    pointer-events: none;
+  }
+  /* 添加格：和 42 的头像格同尺寸，虚线框 + 加号 */
+  .addtile {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    width: 42px;
+    color: var(--fg-3);
+  }
+  .plus {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    outline: 1px dashed var(--fg-4);
+    outline-offset: -1px;
+    transition:
+      color var(--t-fast),
+      outline-color var(--t-fast),
+      background var(--t-fast);
+  }
+  .addtile .nm {
+    font-size: var(--fs-sm);
+  }
+  .addtile:hover {
+    color: var(--red);
+  }
+  .addtile:hover .plus {
+    outline-color: var(--red);
+    background: var(--red-tint);
+  }
+  .enemy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 8px;
+  }
+  .boss {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px;
+    text-align: left;
+    background: linear-gradient(90deg, var(--boss-bg), var(--bg-2));
+    box-shadow: inset 0 0 0 1px var(--boss-line);
+  }
+  .boss:hover {
+    box-shadow: inset 0 0 0 1px var(--gold);
+  }
+  .bpic {
+    width: 54px;
+    height: 54px;
+    flex: none;
+    background: rgb(var(--hl-rgb) / 0.067);
+    box-shadow: 0 0 0 1px var(--boss-ring);
+    overflow: hidden;
+  }
+  .bpic img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .binfo {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+  .leader {
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-bold);
+    padding: 1px 8px;
+    color: var(--gold-ink);
+    background: var(--gold);
+  }
+  .binfo b {
+    font-size: var(--fs-xl);
+  }
+  .binfo .bhp {
+    font-size: var(--fs-sm);
+    color: var(--fg-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .binfo .bhp b {
+    font-size: var(--fs-base);
+    color: var(--gold);
+  }
+  .more {
+    display: flex;
+    align-items: center;
+    font-size: var(--fs-2xs);
+    color: var(--fg-4);
+    align-self: flex-end;
+  }
+  .etype {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: var(--bg-2);
+    font-size: var(--fs-md);
+    font-weight: var(--fw-semi);
+    color: var(--fg-1);
+  }
+  .etype > .en {
+    flex: 1;
+    text-align: center;
+    letter-spacing: 0.05em;
+  }
+  .ei {
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    background: var(--bg-1);
+  }
+  .ei img {
+    width: 22px;
+    height: 22px;
+  }
+  /* 特训敌人一行可以点开 */
+  button.etype {
+    width: 100%;
+    padding: 0;
+    border-radius: 0;
+  }
+  button.etype:hover,
+  button.etype.open {
+    background: var(--bg-3);
+  }
+  .etype .ex {
+    width: 32px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    color: var(--fg-4);
+    transition: transform var(--t-mid) var(--ease-out);
+  }
+  .etype.open .ex {
+    transform: rotate(180deg);
+    color: var(--fg-2);
+  }
+  .variants {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 8px 10px;
+    background: var(--bg-1);
+    margin-bottom: 2px;
+  }
+  .vlabel {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-bold);
+    color: var(--fg-2);
+    margin-bottom: 4px;
+  }
+  .vlabel small {
+    font-weight: var(--fw-base);
+    color: var(--fg-4);
+  }
+  .vgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 4px;
+  }
+  .vitem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px 3px 3px;
+    background: var(--bg-2);
+    min-width: 0;
+    text-align: left;
+  }
+  .vitem:hover {
+    background: var(--bg-3);
+  }
+  .vimg {
+    position: relative;
+    width: 30px;
+    height: 30px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    background: rgb(var(--hl-rgb) / 0.05);
+  }
+  .vimg img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    position: relative;
+    z-index: 1;
+  }
+  .vimg img:global(.miss) {
+    display: none;
+  }
+  /* 图标还没到时显示名字的第一个字 */
+  .vimg b {
+    position: absolute;
+    font-size: var(--fs-sm);
+    color: var(--fg-4);
+  }
+  .vname {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--fs-sm);
+    line-height: 1.25;
+    color: var(--fg-1);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .vp {
+    flex: none;
+    font-size: var(--fs-2xs);
+    color: var(--fg-4);
+    font-variant-numeric: tabular-nums;
+  }
+  /* 敌方情报标题右侧的「路线」按钮：亮着 = 开 */
+  .rbtn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 6px;
+    font-size: var(--fs-sm);
+    color: var(--fg-3);
+  }
+  .rbtn i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--fg-4);
+  }
+  .rbtn.on {
+    color: var(--mint);
+  }
+  .rbtn.on i {
+    background: var(--mint);
+    box-shadow: 0 0 6px rgb(var(--mint-rgb) / 0.8);
+  }
+  .rbtn:hover {
+    color: var(--fg-1);
+  }
+  .rbtn.on:hover {
+    color: var(--mint-hi);
+  }
+  .recs {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 8px;
+  }
+  .all {
+    display: flex;
+    align-items: center;
+    align-self: flex-end;
+    font-size: var(--fs-base);
+    color: var(--fg-3);
+    padding: 2px 0;
+  }
+  .all:hover {
+    color: var(--mint);
+  }
+  /* 宽（工作台）：状态行占满，下面各区块分两列从上往下排 */
+  @container (min-width: 820px) {
+    .page {
+      display: block;
+      columns: 2;
+      column-gap: 16px;
+    }
+    .page > :global(*) {
+      break-inside: avoid;
+      margin-bottom: 12px;
+    }
+    .status {
+      column-span: all;
+    }
+  }
+  /* 乌萨斯：首领条、关注提醒、识别提示右下角斜切（只管本页的这几个，别处同名的类不动） */
+  :global([data-skin='ursus']) :is(.boss, .focus, .note) {
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+  }
+  /* 工作台三栏：各栏从上往下排，互不对齐行高 */
+  .page.wide {
+    display: flex;
+    columns: auto;
+  }
+  .cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+  }
+  .col {
+    min-width: 0;
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  /* 可露希尔：「关注的被影响了」是千禧年系统的报错对话框——粉紫渐变标题栏、关闭是小方块、粉色窗口边；
+     「都可用」、识别提示是青色描边的小提示条；策略栏是带窗口边的小窗口 */
+  :global([data-skin='closure']) .focus.bad {
+    gap: 8px;
+    padding: 0 0 8px;
+    background: rgb(var(--bg-0-rgb) / 0.6);
+    box-shadow: inset 0 0 0 2px var(--win-pink);
+    border-radius: var(--r-2);
+    overflow: hidden;
+  }
+  :global([data-skin='closure']) .focus.bad .fh {
+    padding: 3px 4px 3px 8px;
+    color: var(--fg-0);
+    background: linear-gradient(90deg, var(--win-pink), #b03ad8 70%, #6a2bd0);
+  }
+  :global([data-skin='closure']) .focus.bad .fh .nx {
+    width: 18px;
+    height: 18px;
+    margin: 0 0 0 auto;
+    opacity: 1;
+    color: #001a20;
+    background: var(--win-cyan);
+    border-radius: 0;
+    box-shadow:
+      inset 1px 1px 0 rgb(var(--hl-rgb) / 0.5),
+      inset -1px -1px 0 rgb(var(--shade-rgb) / 0.35);
+  }
+  :global([data-skin='closure']) .focus.bad .fl {
+    padding: 0 8px;
+  }
+  :global([data-skin='closure']) :is(.focus.ok, .note:not(.warn)) {
+    color: var(--win-cyan);
+    background: rgb(var(--mint-rgb) / 0.08);
+    box-shadow: inset 0 0 0 1.5px rgb(var(--mint-rgb) / 0.6);
+  }
+  :global([data-skin='closure']) .strategy {
+    background: rgb(var(--bg-0-rgb) / 0.55);
+    box-shadow: inset 0 0 0 2px var(--win-edge);
+    border-radius: var(--r-2);
+  }
+  :global([data-skin='closure']) .strategy:hover {
+    background: rgb(var(--mint-rgb) / 0.08);
+    box-shadow: inset 0 0 0 2px var(--win-cyan);
+  }
+
+  /* 乌萨斯：「关注的被影响了」是警示牌——标题压在铁锈红斜切标语条上（米白粗斜体），牌身深色、右下角斜切；
+     「都可用」、识别提示是淡灰绿左条；策略栏左边一道铁锈红 */
+  :global([data-skin='ursus']) .focus.bad {
+    gap: 8px;
+    padding: 0 0 8px;
+    background: rgb(var(--bg-0-rgb) / 0.6);
+    box-shadow: inset 0 -3px 0 var(--rust);
+  }
+  /* 红条用伪元素画（斜切会裁掉子元素，× 在标题行里，不能直接斜切标题行），× 留在红条外面 */
+  :global([data-skin='ursus']) .focus.bad .fh {
+    position: relative;
+    isolation: isolate;
+    align-self: flex-start;
+    padding: 4px 4px 4px 10px;
+    font-style: italic;
+    color: var(--cream);
+  }
+  :global([data-skin='ursus']) .focus.bad .fh::before {
+    content: '';
+    position: absolute;
+    inset: 0 22px 0 0;
+    z-index: -1;
+    background: var(--noise), linear-gradient(180deg, var(--rust-hi), var(--rust));
+    clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
+  }
+  :global([data-skin='ursus']) .focus.bad .fh .nx {
+    margin-left: 12px;
+    color: var(--fg-2);
+  }
+  :global([data-skin='ursus']) .focus.bad .fl {
+    padding: 0 8px;
+  }
+  :global([data-skin='ursus']) :is(.focus.ok, .note:not(.warn)) {
+    color: var(--mint);
+    background: rgb(var(--mint-rgb) / 0.08);
+    box-shadow: inset 3px 0 0 var(--mint);
+  }
+  :global([data-skin='ursus']) .strategy {
+    background: var(--noise), rgb(var(--bg-0-rgb) / 0.55);
+    box-shadow: inset 3px 0 0 var(--rust);
+  }
+  :global([data-skin='ursus']) .strategy:hover {
+    background: var(--noise), rgb(var(--rust-rgb) / 0.12);
+    box-shadow: inset 5px 0 0 var(--rust-hi);
+  }
+</style>

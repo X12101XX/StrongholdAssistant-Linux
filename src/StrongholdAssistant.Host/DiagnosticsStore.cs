@@ -1,0 +1,173 @@
+using System.Drawing;
+using ASPAssistant.Core.Models;
+using ASPAssistant.Core.Services;
+using System.Drawing.Imaging;
+using System.IO.Compression;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+
+namespace StrongholdAssistant.Host;
+
+public sealed class DiagnosticsStore(string directory)
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<(int? Round, BoardCamera Camera), int> _boardFailures = new();
+
+    internal void ResetBoardFailures()
+    {
+        lock (_gate) _boardFailures.Clear();
+    }
+
+    internal void SaveBoardFailure(byte[] screenshot, int? round, BoardRecognition result, bool solo, string? bossId, DateTimeOffset time)
+    {
+        lock (_gate)
+        {
+            var key = (round, result.Camera);
+            int count = _boardFailures.GetValueOrDefault(key);
+            if (count >= 3) return;
+            var folder = Path.Combine(directory, "diagnostics", "board");
+            Directory.CreateDirectory(folder);
+            var name = time.UtcDateTime.ToString("yyyyMMdd-HHmmssfffffff");
+            using var input = new MemoryStream(screenshot);
+            using var image = new Bitmap(input);
+            File.WriteAllBytes(Path.Combine(folder, name + ".png"), DiagnosticPng(image));
+            File.WriteAllText(Path.Combine(folder, name + ".json"), SanitizeJson(new
+            {
+                time, round, mapId = result.MapId, camera = result.Camera, score = result.Score,
+                gap = result.Gap, reason = result.Rejection, solo, bossId, width = result.Width, height = result.Height
+            }));
+            _boardFailures[key] = count + 1;
+            foreach (var old in Directory.GetFiles(folder, "*.json").OrderDescending().Skip(30))
+            {
+                File.Delete(old);
+                File.Delete(Path.ChangeExtension(old, ".png"));
+            }
+        }
+    }
+    public string SaveFailure(byte[]? screenshot, string reason, string? source, double? scale, string[] steps)
+    {
+        int? width = null, height = null;
+        byte[]? png = null;
+        if (screenshot is not null)
+        {
+            using var stream = new MemoryStream(screenshot);
+            using var image = new Bitmap(stream);
+            width = image.Width; height = image.Height;
+            png = DiagnosticPng(image);
+        }
+        var details = $"画面: {width?.ToString() ?? "未知"}×{height?.ToString() ?? "未知"}; 来源: {source ?? "未连接"}; UI 缩放: {scale?.ToString("F3") ?? "未测得"}\n步骤: {reason}\n{string.Join('\n', steps)}";
+        var message = Redact(reason + "\n" + details);
+        lock (_gate)
+        {
+            var folder = Path.Combine(directory, "diagnostics");
+            Directory.CreateDirectory(folder);
+            var name = $"{DateTime.UtcNow:yyyyMMdd-HHmmssfff}-{Guid.NewGuid():N}";
+            if (png is not null) File.WriteAllBytes(Path.Combine(folder, name + ".png"), png);
+            File.WriteAllText(Path.Combine(folder, name + ".json"), SanitizeJson(
+                new { time = DateTimeOffset.UtcNow, reason, width, height, source, scale, steps }));
+            foreach (var old in Directory.GetFiles(folder, "*.json").OrderDescending().Skip(10))
+            {
+                File.Delete(old);
+                File.Delete(Path.ChangeExtension(old, ".png"));
+            }
+        }
+        ASPAssistant.Core.AppLogger.Warn("Recognition", message);
+        return message;
+    }
+
+    public void Export(string path, SettingsDto settings, Connection connection, object system, byte[]? boardFrame = null)
+    {
+        lock (_gate)
+        {
+            using var fileStream = new FileStream(path, FileMode.Create, FileAccess.Write);
+            using var zip = new ZipArchive(fileStream, ZipArchiveMode.Create);
+            if (boardFrame is not null)
+            {
+                using var input = new MemoryStream(boardFrame);
+                using var image = new Bitmap(input);
+                using var output = zip.CreateEntry("diagnostics/board-latest.png").Open();
+                output.Write(DiagnosticPng(image));
+            }
+            foreach (var folder in new[] { "logs", "diagnostics" })
+            {
+                var root = Path.Combine(directory, folder);
+                if (!Directory.Exists(root)) continue;
+                foreach (var file in Directory.GetFiles(root, "*", folder == "diagnostics" ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly).Where(f => folder == "logs"
+                    ? Path.GetExtension(f) == ".log" : Path.GetExtension(f) is ".json" or ".png"))
+                {
+                    var entry = zip.CreateEntry(folder + "/" + Path.GetRelativePath(root, file).Replace('\\', '/'));
+                    using var output = entry.Open();
+                    if (Path.GetExtension(file) == ".png")
+                    {
+                        using var input = File.OpenRead(file);
+                        input.CopyTo(output);
+                    }
+                    else
+                    {
+                        using var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                        using var reader = new StreamReader(input);
+                        using var writer = new StreamWriter(output);
+                        writer.Write(Redact(reader.ReadToEnd()));
+                    }
+                }
+            }
+            var all = JsonSerializer.SerializeToNode(settings, HostApi.JsonOptions)!.AsObject();
+            // 白名单避免将未来增加的云端或账号字段带入诊断包。
+            string[] allowed = ["collect", "gameTheme", "gameThemeAuto", "multiInstance", "hideFromTaskbar", "uiSkin", "uiScheme", "uiAccent", "plazaNotices", "shopMarkers", "shopScanSpeed", "autoCheckUpdate", "autoDownloadUpdate", "updateSource", "updateProxy", "uiScale", "alwaysOnTop", "gameSource", "hideCaptureBorder",
+                "followGame", "dockSide", "overlaySide", "toggleHotkey", "refreshKey", "startupMode", "collapseMode", "focusCovenants", "focusOperators", "routes"];
+            var safe = new JsonObject();
+            foreach (var key in allowed) safe[key] = all[key]?.DeepClone();
+            safe["updateProxy"] = settings.UpdateProxy == "" ? "system" : new Uri(settings.UpdateProxy).Scheme;
+            safe["adbAddress"] = settings.AdbAddress == "" ? "auto" : "manual";
+            WriteJson(zip, "settings.json", safe);
+            WriteJson(zip, "connection.json", connection);
+            var systemFields = JsonSerializer.SerializeToNode(system, HostApi.JsonOptions)!.AsObject();
+            var safeSystem = new JsonObject();
+            foreach (var key in new[] { "version", "windows", "dpi", "monitors", "dpiAwareness", "windowSnapshot", "gameWindows", "detectedTheme", "configuredTheme", "roundEnemyPanel", "capture" })
+                safeSystem[key] = systemFields[key]?.DeepClone();
+            WriteJson(zip, "system.json", safeSystem);
+        }
+    }
+
+    private static byte[] DiagnosticPng(Bitmap image)
+    {
+        double ratio = Math.Min(1, 1920.0 / Math.Max(image.Width, image.Height));
+        using var small = new Bitmap(Math.Max(1, (int)(image.Width * ratio)), Math.Max(1, (int)(image.Height * ratio)));
+        using (var graphics = Graphics.FromImage(small))
+            graphics.DrawImage(image, new Rectangle(0, 0, small.Width, small.Height),
+                new Rectangle(0, 0, image.Width, image.Height), GraphicsUnit.Pixel);
+        using var encoded = new MemoryStream();
+        small.Save(encoded, ImageFormat.Png);
+        return encoded.ToArray();
+    }
+
+    private static void WriteJson(ZipArchive zip, string name, object value)
+    {
+        using var writer = new StreamWriter(zip.CreateEntry(name).Open());
+        writer.Write(SanitizeJson(value));
+    }
+    private static string SanitizeJson(object value)
+    {
+        var node = JsonSerializer.SerializeToNode(value, HostApi.JsonOptions)!;
+        JsonNode? Clean(JsonNode? item)
+        {
+            if (item is JsonValue v && v.TryGetValue<string>(out var text)) return JsonValue.Create(Redact(text));
+            if (item is JsonObject obj)
+                foreach (var key in obj.Select(p => p.Key).ToArray()) obj[key] = Clean(obj[key]?.DeepClone());
+            if (item is JsonArray array)
+                for (int i = 0; i < array.Count; i++) array[i] = Clean(array[i]?.DeepClone());
+            return item;
+        }
+        return Clean(node)!.ToJsonString(HostApi.JsonOptions);
+    }
+    public static string Redact(string text)
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (profile.Length > 0) text = text.Replace(profile, "%USERPROFILE%", StringComparison.OrdinalIgnoreCase);
+        text = Regex.Replace(text, @"(?i)([a-z]:[\\/]+Users[\\/]+)[^\\/\r\n""]+", "$1[用户]");
+        text = Regex.Replace(text, @"(?i)(/(?:home|Users)/)[^/\r\n""]+", "$1[用户]");
+        text = Regex.Replace(text, @"(?i)(Bearer\s+)[^\s""\\,;]+", "$1[已隐藏]");
+        return Regex.Replace(text, @"(?i)((?:[\w-]*(?:token|secret|password|credential|cdk|cookie|authorization|accesskey)[\w-]*|cred|sign)\s*""?\s*[:=]\s*""?)[^""\r\n,;&}]+", "$1[已隐藏]");
+    }
+}

@@ -1,0 +1,662 @@
+/*
+ * 两套通用风格主题（v0.9.8，用户 2026-11-15 要求「不照卫戍协议做」）：
+ * - 毛玻璃（glass）：像 Windows 11 的通用软件。窗口外壳（标题栏、导航、工作台左栏）和浮在上面的东西
+ *   （底部面板、右键菜单、提示、轻提示）是半透明磨砂，透出下面的内容和底色里的淡彩光斑；
+ *   内容区的分组是实心卡片，不磨砂，读起来稳。蓝色强调，小圆角。
+ * - 圆润（round）：按钮、分段、标签都是胶囊，分组是大圆角卡片、靠柔和阴影分层而不是描边。紫色强调。
+ * 两套都有深色、浅色（根元素 data-scheme，App.svelte 按设置「配色」和系统深浅算）。
+ *
+ * 写法：只在 html:root[data-modern] 下生效。先覆盖 app.css 的令牌，再把终端风格的装饰（英文小字、切角、发光、
+ * 做旧噪点、斜纹）去掉，最后是各自的形状。盟约圆盘、干员卡、等阶角标走 data-plain 的 CSS 画法（同经典）。
+ * 选择器带 html:root[data-…]，优先级高过组件里的单个类，不用 !important。
+ */
+
+/* ───────── 共用令牌 ───────── */
+html:root[data-modern] {
+  --font-term: var(--font-ui);
+  --noise: none;
+  --hatch: none;
+  --mint-glow: 0 0 0 0 transparent;
+  --tier-h: 1;
+  /* 不用左侧色条（用户 2026-11-15：圆角卡片边上一道线不好看）：提示框靠浅色底 + 同色细描边，选中项靠强调色底 + 描边 */
+  --edge: 0px;
+  /* 等阶牌上的字 */
+  --tier-ink: #111;
+  /* 卡片、磨砂层 */
+  --card: var(--bg-2);
+  --card-line: var(--line-soft);
+  --card-shadow: none;
+  --glass: rgb(var(--bg-1-rgb) / 0.6);
+  --glass-strong: rgb(var(--bg-1-rgb) / 0.78);
+  --glass-line: rgb(var(--hl-rgb) / 0.08);
+  --glass-blur: blur(28px) saturate(160%);
+  --pop-shadow: 0 8px 28px rgb(var(--shade-rgb) / 0.45), 0 0 0 1px var(--glass-line);
+  /* 页面底：淡彩光斑，让磨砂层有东西可透 */
+  --page:
+    radial-gradient(60% 50% at 0% 0%, rgb(var(--mint-rgb) / 0.16), transparent 70%),
+    radial-gradient(50% 45% at 100% 100%, rgb(var(--blob-rgb) / 0.14), transparent 70%),
+    var(--bg-0);
+  --round-bg: rgb(var(--mint-rgb) / 0.16);
+  --round-fg: var(--mint);
+  --head-top: transparent;
+  --head-bottom: transparent;
+  --head-hi-top: rgb(var(--hl-rgb) / 0.04);
+  --head-hi-bottom: rgb(var(--hl-rgb) / 0.04);
+  --sheet-top: var(--glass-strong);
+  --sheet-bottom: var(--glass-strong);
+  --pop-top: var(--glass-strong);
+  --pop-bottom: var(--glass-strong);
+  /* 图鉴卡名字条 */
+  --card-name-bg: linear-gradient(180deg, transparent, rgb(0 0 0 / 0.55));
+  --card-name-fg: #fff;
+  --card-bond-fg: var(--fg-3);
+  --card-bond-core-fg: var(--fg-1);
+  --close-bg: #c42b1c;
+  /* 悬停时盖在按钮上的一层（深色提亮、浅色压暗），选中的强调色按钮悬停也只是这样变一点，字色不变 */
+  --state: rgb(255 255 255 / 0.12);
+}
+html:root[data-modern][data-scheme='light'] {
+  --state: rgb(0 0 0 / 0.07);
+}
+
+/* ───────── 毛玻璃 · 深色 ───────── */
+html:root[data-skin='glass'] {
+  --bg-0-rgb: 24 26 31;
+  --bg-1-rgb: 32 34 40;
+  --bg-1: rgb(var(--bg-1-rgb));
+  --bg-1a: #22252b;
+  --bg-2: #272a31;
+  --bg-2a: #2b2e35;
+  --bg-3: #31353d;
+  --bg-4: #3b3f48;
+  --bg-5: #474c56;
+  --line: #363a42;
+  --line-soft: #2f3239;
+  --line-strong: #434852;
+  --line-hi: #5c6270;
+
+  --fg-0: #ffffff;
+  --fg-1: #e9ebef;
+  --fg-2: #b3b8c2;
+  --fg-3: #858b97;
+  --fg-4: #5d636e;
+
+  /* 强调蓝（Windows 11 深色模式的强调色那一档：浅蓝底配深字） */
+  --mint-rgb: 102 170 255;
+  --mint-hi: #9cc8ff;
+  --mint-lo: #3f86e8;
+  --mint-ink: #04152e;
+  --mint-tint: rgb(var(--mint-rgb) / 0.12);
+  --blob-rgb: 168 120 255;
+
+  --gold-rgb: 245 185 66;
+  --gold-ink: #2a1c00;
+  --red-rgb: 240 96 96;
+
+  --bond-off: #9aa0aa;
+  --bond-on-fg: var(--mint-ink);
+  --bond-off-top: #353942;
+  --bond-off-bottom: #2b2e35;
+  --bond-off-ring: #454a55;
+  --bond-on-shade: rgb(0 30 80 / 0.25);
+
+  --boss-bg: #2c2a31;
+  --boss-line: #3d3a45;
+  --boss-ring: #4f4b5a;
+
+  --r-1: 4px;
+  --r-2: 6px;
+  --r-card: 8px;
+  color-scheme: dark;
+}
+
+/* ───────── 毛玻璃 · 浅色 ───────── */
+html:root[data-skin='glass'][data-scheme='light'] {
+  --bg-0-rgb: 236 239 244;
+  --bg-1-rgb: 246 247 250;
+  --bg-1a: #f8f9fb;
+  --bg-2: #ffffff;
+  --bg-2a: #ffffff;
+  --bg-3: #eef0f4;
+  --bg-4: #e2e5eb;
+  --bg-5: #d4d8e0;
+  --line: #dde1e7;
+  --line-soft: #e7eaef;
+  --line-strong: #cfd4dc;
+  --line-hi: #a9b0bb;
+
+  --fg-0: #0a0c10;
+  --fg-1: #1b1f26;
+  --fg-2: #474e5a;
+  --fg-3: #6b7280;
+  --fg-4: #9aa1ad;
+
+  --shade-rgb: 20 28 45;
+  --mint-rgb: 0 103 192;
+  --mint-hi: #004e94;
+  --mint-lo: #4a95dc;
+  --mint-ink: #ffffff;
+  --mint-tint: rgb(var(--mint-rgb) / 0.08);
+  --blob-rgb: 150 110 255;
+
+  --gold-rgb: 184 120 0;
+  --gold-ink: #ffffff;
+  --red-rgb: 200 40 48;
+  --red-fg-rgb: 190 30 40;
+  --red-fg-hi: #9e1018;
+  --like-rgb: 230 70 100;
+
+  --bond-off: #7a818d;
+  --bond-off-top: #f3f5f8;
+  --bond-off-bottom: #e4e7ec;
+  --bond-off-ring: #cfd4dc;
+  --bond-on-shade: rgb(0 40 100 / 0.2);
+
+  --boss-bg: #f6f2ea;
+  --boss-line: #e4dccb;
+  --boss-ring: #cfc4ad;
+
+  --glass: rgb(var(--bg-1-rgb) / 0.55);
+  --glass-strong: rgb(var(--bg-1-rgb) / 0.78);
+  --glass-line: rgb(20 28 45 / 0.08);
+  --pop-shadow: 0 8px 28px rgb(var(--shade-rgb) / 0.16), 0 0 0 1px var(--glass-line);
+  --scrim: rgb(var(--shade-rgb) / 0.22);
+  --scrim-strong: rgb(var(--shade-rgb) / 0.3);
+  --well: rgb(var(--shade-rgb) / 0.04);
+  --card-shadow: 0 1px 2px rgb(var(--shade-rgb) / 0.05);
+  color-scheme: light;
+}
+
+/* ───────── 圆润 · 深色 ───────── */
+html:root[data-skin='round'] {
+  --bg-0-rgb: 22 21 28;
+  --bg-1-rgb: 30 29 38;
+  --bg-1: rgb(var(--bg-1-rgb));
+  --bg-1a: #211f2a;
+  --bg-2: #26242f;
+  --bg-2a: #2a2834;
+  --bg-3: #312f3c;
+  --bg-4: #3c3a49;
+  --bg-5: #4a4859;
+  --line: #34323f;
+  --line-soft: #2c2a36;
+  --line-strong: #43414f;
+  --line-hi: #625f73;
+
+  --fg-0: #ffffff;
+  --fg-1: #eceaf3;
+  --fg-2: #b9b5c8;
+  --fg-3: #8a869c;
+  --fg-4: #5f5b70;
+
+  /* 强调紫 */
+  --mint-rgb: 150 132 255;
+  --mint-hi: #bcb0ff;
+  --mint-lo: #7563e6;
+  --mint-ink: #ffffff;
+  --mint-tint: rgb(var(--mint-rgb) / 0.14);
+  --blob-rgb: 255 130 180;
+
+  --gold-rgb: 255 190 80;
+  --gold-ink: #2a1a00;
+  --red-rgb: 255 107 120;
+
+  --bond-off: #9692a8;
+  --bond-on-fg: #ffffff;
+  --bond-off-top: #34323f;
+  --bond-off-bottom: #34323f;
+  --bond-off-ring: transparent;
+  --bond-on-shade: transparent;
+
+  --boss-bg: #2e2a36;
+  --boss-line: transparent;
+  --boss-ring: #4f4a5e;
+
+  --r-1: 8px;
+  --r-2: 12px;
+  --r-card: 16px;
+  --card-shadow: 0 2px 10px rgb(var(--shade-rgb) / 0.25);
+  color-scheme: dark;
+}
+
+/* ───────── 圆润 · 浅色 ───────── */
+html:root[data-skin='round'][data-scheme='light'] {
+  --bg-0-rgb: 243 241 248;
+  --bg-1-rgb: 250 249 253;
+  --bg-1a: #fbfaff;
+  --bg-2: #ffffff;
+  --bg-2a: #ffffff;
+  --bg-3: #f0eef7;
+  --bg-4: #e5e2f0;
+  --bg-5: #d8d4e6;
+  --line: #e4e1ee;
+  --line-soft: #ece9f4;
+  --line-strong: #d6d2e4;
+  --line-hi: #aaa5c0;
+
+  --fg-0: #0f0d18;
+  --fg-1: #1e1b29;
+  --fg-2: #4b4760;
+  --fg-3: #716c88;
+  --fg-4: #a19cb6;
+
+  --shade-rgb: 40 30 80;
+  --mint-rgb: 104 84 232;
+  --mint-hi: #4f3bd0;
+  --mint-lo: #9d8ff2;
+  --mint-tint: rgb(var(--mint-rgb) / 0.09);
+  --blob-rgb: 255 120 170;
+
+  --gold-rgb: 196 128 0;
+  --gold-ink: #ffffff;
+  --red-rgb: 214 48 72;
+  --red-fg-rgb: 196 34 58;
+  --red-fg-hi: #a01530;
+  --like-rgb: 230 70 110;
+
+  --bond-off: #8580a0;
+  --bond-off-top: #efedf6;
+  --bond-off-bottom: #efedf6;
+
+  --boss-bg: #fbf5ec;
+  --boss-ring: #e2d4b8;
+
+  --glass: rgb(var(--bg-1-rgb) / 0.6);
+  --glass-strong: rgb(var(--bg-1-rgb) / 0.82);
+  --glass-line: rgb(40 30 80 / 0.08);
+  --pop-shadow: 0 10px 30px rgb(var(--shade-rgb) / 0.14), 0 0 0 1px var(--glass-line);
+  --scrim: rgb(var(--shade-rgb) / 0.2);
+  --scrim-strong: rgb(var(--shade-rgb) / 0.28);
+  --well: rgb(var(--shade-rgb) / 0.04);
+  --card-shadow: 0 1px 3px rgb(var(--shade-rgb) / 0.06), 0 6px 20px rgb(var(--shade-rgb) / 0.06);
+  color-scheme: light;
+}
+
+/* 浅色下的等阶色：2 阶原来是近白，浅底上看不见；各阶都压暗一点，牌上用白字 */
+html:root[data-modern][data-scheme='light'] {
+  --tier-1: #8a9099;
+  --tier-2: #5f6b7a;
+  --tier-3: #12a37a;
+  --tier-4: #1689c4;
+  --tier-5: #d19a00;
+  --tier-6-rgb: 230 108 0;
+  --tier-ink: #fff;
+}
+
+/* ───────── 去掉终端装饰 ───────── */
+/* 只为好看的英文小字：标题栏「GXYY · Stronghold Assistant」、分组标题右边、标签下面 */
+html:root[data-modern] :is(.bar .sub, .sh .en, nav.tabs .en, .sheet > header > .term) {
+  display: none;
+}
+/* 别的英文标签（TARGET、Update 等）照常显示，但不是终端字：正常字距、不全大写 */
+html:root[data-modern] .term {
+  letter-spacing: 0.02em;
+}
+html:root[data-modern] .sh::after,
+html:root[data-modern] .win::before,
+html:root[data-modern] .sheet::before {
+  display: none;
+}
+/* 标题栏的菱形标：换成圆角小方块 */
+html:root[data-modern] .bar .logo {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 4px;
+  transform: none;
+  box-shadow: none;
+  background: linear-gradient(135deg, var(--mint-hi), var(--mint-lo));
+}
+html:root[data-modern] .bar .logo i {
+  display: none;
+}
+html:root[data-modern][data-scheme='light'] .bar .logo {
+  background: linear-gradient(135deg, var(--mint-lo), var(--mint));
+}
+/* 发光去掉：连接状态点、呼吸点、选中描边 */
+html:root[data-modern] :is(.ok .dot, .live-dot) {
+  box-shadow: none;
+}
+html:root[data-modern] ::-webkit-scrollbar-thumb {
+  border-radius: 6px;
+  background: rgb(var(--fg-rgb, 128 128 128) / 0.35);
+}
+
+/* ───────── 外壳 ───────── */
+html:root[data-modern] .shell {
+  background: var(--page);
+}
+html:root[data-modern] .bar {
+  background: transparent;
+  border-bottom-color: transparent;
+}
+html:root[data-modern] .bar .wbtn {
+  border-radius: 0;
+}
+html:root[data-modern] .bar .wbtn.close:hover {
+  color: #fff;
+}
+/* 侧栏的标签栏、工作台左栏：外壳的一部分，透着底色 */
+html:root[data-modern] nav.tabs {
+  background: transparent;
+  border-color: transparent;
+}
+html:root[data-modern] .rail {
+  background: var(--glass);
+  border-right: 1px solid var(--glass-line);
+}
+html:root[data-modern] .tracker {
+  background: transparent;
+}
+
+/* 分组：实心卡片（内容区不磨砂） */
+html:root[data-modern] section:has(> header.sh) {
+  padding: 0 10px 10px;
+  background: var(--card);
+  border-radius: var(--r-card);
+  box-shadow: var(--card-shadow), inset 0 0 0 1px var(--card-line);
+}
+html:root[data-modern] section:has(> header.sh) > header.sh {
+  margin: 0 -10px 4px;
+}
+/* 分组标题：不是一条底色条，就是卡片里的标题行 */
+html:root[data-modern] .sh {
+  height: 40px;
+  padding: 0 10px 0 12px;
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--r-card) var(--r-card) 0 0;
+}
+html:root[data-modern] .sh.fold:hover {
+  background: rgb(var(--hl-rgb) / 0.03);
+}
+html:root[data-modern][data-scheme='light'] .sh.fold:hover {
+  background: rgb(var(--shade-rgb) / 0.025);
+}
+html:root[data-modern] .sh h2 {
+  font-size: var(--fs-lg);
+  letter-spacing: 0.02em;
+}
+html:root[data-modern] .sh .icon {
+  color: var(--mint);
+}
+html:root[data-modern] .sh .tag {
+  color: var(--fg-2);
+  background: var(--bg-3);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+}
+
+/* 底部面板（详情、编辑器、设置……）和弹层：磨砂 */
+html:root[data-modern] aside.sheet,
+html:root[data-modern] aside.win {
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--pop-shadow);
+}
+html:root[data-modern] :is(.tip, .menu, .toast) {
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-radius: var(--r-2);
+  box-shadow: var(--pop-shadow);
+}
+
+/* 按钮、输入框：圆角 */
+:where(:root[data-modern]) button {
+  border-radius: var(--r-1);
+}
+html:root[data-modern] :is(.btn, .tool, .chip, .tog, .add, .opt, .act, .primary, .secondary, .lc .badge, .trk) {
+  border-radius: var(--r-1);
+}
+html:root[data-modern] :is(input[type='text'], input:not([type]), textarea, .search) {
+  border-radius: var(--r-1);
+}
+html:root[data-modern] :is(.primary, .btn.main):not(:disabled) {
+  color: var(--mint-ink);
+  background: var(--mint);
+  box-shadow: none;
+}
+html:root[data-modern] :is(.focus, .note, .boss, .crash, .stpick) {
+  border-radius: var(--r-2);
+}
+html:root[data-modern] .rd b.tag {
+  border-radius: var(--r-1);
+}
+
+/* 盟约圆盘（CSS 画）：平的，激活是强调色实心 */
+html:root[data-modern] .bond .disc {
+  background: var(--bond-off-bottom);
+  box-shadow: inset 0 0 0 1px var(--bond-off-ring);
+}
+html:root[data-modern] .bond.on .disc {
+  background: var(--mint);
+  box-shadow: none;
+}
+/* 干员卡：圆角 */
+html:root[data-modern] .card {
+  border-radius: var(--r-2);
+}
+
+/* ───────── 毛玻璃专有 ───────── */
+/* 标签：选中项底下一根短的圆头强调线（Windows 11 导航的样子） */
+html:root[data-skin='glass'] nav.tabs button.on {
+  background: transparent;
+}
+html:root[data-skin='glass'] nav.tabs button:hover {
+  background: rgb(var(--hl-rgb) / 0.04);
+}
+html:root[data-skin='glass'][data-scheme='light'] nav.tabs button:hover {
+  background: rgb(var(--shade-rgb) / 0.04);
+}
+html:root[data-skin='glass'] nav.tabs .ink::after {
+  left: calc(50% - 10px);
+  right: auto;
+  width: 20px;
+  border-radius: 3px;
+  clip-path: none;
+  box-shadow: none;
+}
+html:root[data-skin='glass'] nav.tabs.vertical {
+  padding: 4px 6px;
+  border-right: 0;
+}
+html:root[data-skin='glass'] nav.tabs.vertical button {
+  border-radius: var(--r-1);
+  padding-left: 16px;
+}
+html:root[data-skin='glass'] nav.tabs.vertical button.on {
+  background: rgb(var(--hl-rgb) / 0.06);
+}
+html:root[data-skin='glass'][data-scheme='light'] nav.tabs.vertical button.on {
+  background: rgb(var(--shade-rgb) / 0.05);
+}
+html:root[data-skin='glass'] nav.tabs.vertical .ink {
+  left: 6px;
+  top: 4px;
+}
+html:root[data-skin='glass'] nav.tabs.vertical .ink::after {
+  left: 0;
+  width: 3px;
+  top: 15px;
+  bottom: 15px;
+  border-radius: 2px;
+}
+
+/* ───────── 圆润专有 ───────── */
+/* 标签：一条胶囊分段，选中的是浮起来的白（深色是亮一档的）胶囊 */
+html:root[data-skin='round'] nav.tabs:not(.vertical) {
+  margin: 6px 8px 4px;
+  padding: 3px;
+  gap: 2px;
+  background: var(--bg-3);
+  border-radius: var(--r-pill);
+}
+html:root[data-skin='round'] nav.tabs:not(.vertical) button {
+  height: 30px;
+  border-radius: var(--r-pill);
+}
+html:root[data-skin='round'] nav.tabs button.on {
+  color: var(--fg-0);
+  background: var(--bg-2);
+  box-shadow: 0 1px 4px rgb(var(--shade-rgb) / 0.18);
+}
+html:root[data-skin='round'] nav.tabs .ink {
+  display: none;
+}
+html:root[data-skin='round'] nav.tabs.vertical {
+  padding: 6px 8px;
+  gap: 4px;
+  border-right: 0;
+}
+html:root[data-skin='round'] nav.tabs.vertical button {
+  border-radius: var(--r-pill);
+  padding-left: 18px;
+}
+html:root[data-skin='round'] nav.tabs.vertical button.on {
+  color: var(--mint-ink);
+  background: var(--mint);
+  box-shadow: 0 4px 14px rgb(var(--mint-rgb) / 0.35);
+}
+html:root[data-skin='round'] .rail {
+  background: transparent;
+  border-right: 0;
+}
+/* 按钮、分段、筛选标签、小切换组都是胶囊 */
+html:root[data-skin='round'] :is(.btn, .tool, .chip, .tog, .add, .opt, .act, .primary, .secondary, .lc .badge, .trk, .stagesw button, .scales button, .sorts button) {
+  border-radius: var(--r-pill);
+}
+html:root[data-skin='round'] :is(input[type='text'], input:not([type]), textarea, .search) {
+  border-radius: var(--r-pill);
+}
+html:root[data-skin='round'] textarea {
+  border-radius: var(--r-2);
+}
+html:root[data-skin='round'] :is(.primary, .btn.main):not(:disabled) {
+  box-shadow: 0 4px 14px rgb(var(--mint-rgb) / 0.3);
+}
+html:root[data-skin='round'] section:has(> header.sh) {
+  box-shadow: var(--card-shadow);
+}
+html:root[data-skin='round'] .card {
+  border-radius: 12px;
+}
+html:root[data-skin='round'] .bond .disc {
+  box-shadow: none;
+}
+html:root[data-skin='round'] .bond.on .disc {
+  box-shadow: 0 3px 10px rgb(var(--mint-rgb) / 0.4);
+}
+
+/* 资金栏：和分组一样是卡片，去掉左边金线 */
+html:root[data-modern] .econ:not(.compact) {
+  padding: 8px 12px;
+  background: var(--card);
+  border-radius: var(--r-card);
+  box-shadow: var(--card-shadow), inset 0 0 0 1px var(--card-line);
+}
+html:root[data-modern] .econ.compact {
+  background: transparent;
+}
+
+/* 分段控件（设置分页、阵容目标 / 我的、图鉴分类）：浅色轨道，选中项是浮起的一块 */
+html:root[data-modern] .seg {
+  padding: 3px;
+  background: var(--bg-3);
+  border-radius: var(--r-2);
+}
+html:root[data-modern] .seg .pill {
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / var(--n));
+  background: var(--bg-2);
+  border-radius: var(--r-1);
+  box-shadow: 0 1px 3px rgb(var(--shade-rgb) / 0.2), inset 0 0 0 1px var(--glass-line);
+}
+html:root[data-modern][data-scheme='dark'] .seg {
+  background: rgb(var(--bg-0-rgb) / 0.6);
+}
+html:root[data-modern][data-scheme='dark'] .seg .pill {
+  background: var(--bg-4);
+}
+html:root[data-modern] .seg button.on {
+  color: var(--fg-0);
+}
+html:root[data-skin='round'] .seg,
+html:root[data-skin='round'] .seg .pill {
+  border-radius: var(--r-pill);
+}
+
+/* ───────── 替代左侧色条的强调 ───────── */
+/* 提示框：同色浅底 + 同色细描边，标题和图标本来就带颜色 */
+html:root[data-modern] :is(.focus.bad, .crash, .toast.bad) {
+  box-shadow: inset 0 0 0 1px rgb(var(--red-rgb) / 0.28);
+}
+html:root[data-modern] :is(.focus.ok, .solo-guide) {
+  box-shadow: inset 0 0 0 1px rgb(var(--gold-rgb) / 0.3);
+}
+html:root[data-modern] :is(.page .note, .edithint) {
+  box-shadow: inset 0 0 0 1px rgb(var(--mint-rgb) / 0.25);
+}
+/* 选中项：强调色浅底 + 描边（原来靠左边那道线区分选中） */
+html:root[data-modern] :is(.themes button.on, .modes button.on, .recs button.on, .r.on, .detail.on) {
+  background: var(--mint-tint);
+  box-shadow: inset 0 0 0 1px rgb(var(--mint-rgb) / 0.45);
+  border-radius: var(--r-2);
+}
+html:root[data-modern] .fscroll button.on {
+  background: var(--mint-tint);
+  border-radius: var(--r-1);
+}
+html:root[data-modern] .brow.cur {
+  background: rgb(var(--gold-rgb) / 0.1);
+  border-radius: var(--r-1);
+}
+/* 引用、简介：浅灰底的圆角块 */
+html:root[data-modern] :is(.desc, .fpanel) {
+  border-radius: var(--r-2);
+}
+/* 圆角按钮不配底边线：森空岛「攻略大全 / 我的收藏 / 我的发布」选中项是强调色浅底胶囊 */
+html:root[data-modern] .secs {
+  gap: 4px;
+  border-bottom: 0;
+}
+html:root[data-modern] .secs button[role='tab'] {
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+}
+html:root[data-modern] .secs button[role='tab'].on {
+  color: var(--mint);
+  background: var(--mint-tint);
+}
+html:root[data-skin='glass'] .secs button[role='tab'] {
+  border-radius: var(--r-1);
+}
+/* 装备小签（候选装备、详情里的装备）：原来底边一道线，金色是优先 / 已出；改成整圈细描边 */
+html:root[data-modern] :is(.ce, .eqc) {
+  border-radius: var(--r-1);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+html:root[data-modern] :is(.ce.pri, .eqc.out) {
+  box-shadow: inset 0 0 0 1px rgb(var(--gold-rgb) / 0.55);
+}
+html:root[data-modern] .page .note {
+  background: var(--mint-tint);
+}
+/* 追踪条左边的竖条：追踪条本来就在顶上，不用再加线强调 */
+html:root[data-modern] .tracker::before {
+  display: none;
+}
+
+/* ───────── 悬停 ───────── */
+/* 强调色实心的按钮（主按钮、选中的排序 / 分段 / 切换 / 筛选）：悬停叠一层 --state，字色保持按钮字色 */
+html:root[data-modern] :is(.primary, .btn.main, .btn.on, .tog.on, .chip.on, .sorts button.on, .scales button.on, .rounds button.on):not(:disabled):hover {
+  color: var(--mint-ink);
+  background: linear-gradient(var(--state), var(--state)), var(--mint);
+}
+/* 没选中的排序、比例这类小按钮：悬停时底色深一档，不只是字变亮 */
+html:root[data-modern] :is(.sorts button, .scales button, .rounds button):not(.on, :disabled):hover {
+  box-shadow: inset 0 0 0 100px var(--state);
+}

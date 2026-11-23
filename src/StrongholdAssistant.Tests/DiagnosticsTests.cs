@@ -1,0 +1,98 @@
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO.Compression;
+using System.Text.Json;
+using StrongholdAssistant.Host;
+
+namespace StrongholdAssistant.Tests;
+
+public sealed class DiagnosticsTests : IDisposable
+{
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "StrongholdAssistant.Tests", Guid.NewGuid().ToString("N"));
+
+    [Theory]
+    [InlineData("", "auto")]
+    [InlineData("private-host:5555", "manual")]
+    public void KeepsTenFailuresAndExportsOnlySanitizedDiagnosticData(string address, string addressMode)
+    {
+        var store = new DiagnosticsStore(_directory);
+        using var image = new Bitmap(2400, 1200);
+        using var encoded = new MemoryStream();
+        image.Save(encoded, ImageFormat.Png);
+        var png = encoded.ToArray();
+        for (int i = 0; i < 11; i++)
+            store.SaveFailure(png, "未找到核心盟约标题。", "pc", 1.1, [$"OCR (0,0,100,100): 第{i}次"]);
+        var shots = Directory.GetFiles(Path.Combine(_directory, "diagnostics"), "*.png");
+        Assert.Equal(10, shots.Length);
+        Assert.Equal(10, Directory.GetFiles(Path.Combine(_directory, "diagnostics"), "*.json").Length);
+        using var saved = new Bitmap(shots[0]);
+        Assert.Equal((1920, 960), (saved.Width, saved.Height));
+        Directory.CreateDirectory(Path.Combine(_directory, "logs"));
+        File.WriteAllText(Path.Combine(_directory, "logs", "host.log"),
+            Path.Combine(@"C:\", "Users", "ExampleName", "data") + "\naccess_token=private-token\nCDK=private-code\nAuthorization: Bearer private-auth");
+        File.WriteAllText(Path.Combine(_directory, "plaza-token.json"), "private-plaza");
+        File.WriteAllText(Path.Combine(_directory, "settings.json"), """{"cloudSync":{"credential":"private-cloud"},"skland":"private-skland"}""");
+        var settings = new SettingsDto("terminal", true, true)
+        {
+            CloudSync = new(true, "private-cloud", null, null, []),
+            EmulatorSerial = "private-device", AdbAddress = address, ShareIncome = true,
+            UpdateSource = "mirrorchyan", MirrorChyanCdk = "private-cdk", GitHubToken = "private-token-gh", ShopScanSpeed = "fast"
+        };
+        var path = Path.Combine(_directory, "diagnostics.zip");
+        store.Export(path, settings, new("connected", "2400×1200", Source: "pc"),
+            new { version = "0.7.2", windows = Path.Combine(@"C:\", "Users", "示例 用户", "data"), dpi = 144,
+                monitors = new[] { new { left = -1080, top = 0, width = 1080, height = 1920, dpiX = 120, dpiY = 120, primary = false } },
+                dpiAwareness = "PerMonitorV2", windowSnapshot = new { sidebar = new { dpi = 120, visible = true } },
+                capture = new { method = "bitblt", lastFallbackReason = "窗口捕获画面连续两秒未更新" },
+                gameWindows = new[] {
+                    new { handle = 1L, className = "SdkWindow", visible = false, minimized = false, clientWidth = 234, clientHeight = 126, processName = "GameSdk" },
+                    new { handle = 2L, className = "UnityWndClass", visible = true, minimized = true, clientWidth = 1920, clientHeight = 1080, processName = "Arknights" } },
+                path = Path.Combine(@"C:\", "Users", "ExampleName", "data"), chinesePath = Path.Combine(@"C:\", "Users", "示例 用户", "data") });
+        using var zip = ZipFile.OpenRead(path);
+        Assert.Equal(24, zip.Entries.Count);
+        Assert.Contains(zip.Entries, e => e.FullName == "connection.json");
+        var text = string.Join('\n', zip.Entries.Where(e => !e.FullName.EndsWith(".png")).Select(e =>
+        {
+            using var reader = new StreamReader(e.Open());
+            return reader.ReadToEnd();
+        }));
+        Assert.DoesNotContain("ExampleName", text);
+        Assert.DoesNotContain("private-", text);
+        using var settingsReader = new StreamReader(zip.GetEntry("settings.json")!.Open());
+        using var json = JsonDocument.Parse(settingsReader.ReadToEnd());
+        Assert.False(json.RootElement.TryGetProperty("cloudSync", out _));
+        Assert.False(json.RootElement.TryGetProperty("shareIncome", out _));
+        Assert.False(json.RootElement.TryGetProperty("emulatorSerial", out _));
+        Assert.False(json.RootElement.TryGetProperty("mirrorChyanCdk", out _));
+        Assert.False(json.RootElement.TryGetProperty("githubToken", out _));
+        Assert.Equal("mirrorchyan", json.RootElement.GetProperty("updateSource").GetString());
+        Assert.Equal("fast", json.RootElement.GetProperty("shopScanSpeed").GetString());
+        Assert.Equal(addressMode, json.RootElement.GetProperty("adbAddress").GetString());
+        Assert.Equal("remember", json.RootElement.GetProperty("startupMode").GetString());
+        using var systemReader = new StreamReader(zip.GetEntry("system.json")!.Open());
+        using var system = JsonDocument.Parse(systemReader.ReadToEnd());
+        Assert.False(system.RootElement.TryGetProperty("path", out _));
+        Assert.False(system.RootElement.TryGetProperty("chinesePath", out _));
+        Assert.Equal(Path.Combine(@"C:\", "Users", "[用户]", "data"), system.RootElement.GetProperty("windows").GetString());
+        Assert.Equal("PerMonitorV2", system.RootElement.GetProperty("dpiAwareness").GetString());
+        Assert.Equal("bitblt", system.RootElement.GetProperty("capture").GetProperty("method").GetString());
+        Assert.Equal("窗口捕获画面连续两秒未更新", system.RootElement.GetProperty("capture").GetProperty("lastFallbackReason").GetString());
+        Assert.Equal(-1080, system.RootElement.GetProperty("monitors")[0].GetProperty("left").GetInt32());
+        Assert.Equal(120, system.RootElement.GetProperty("windowSnapshot").GetProperty("sidebar").GetProperty("dpi").GetInt32());
+        var windows = system.RootElement.GetProperty("gameWindows");
+        Assert.Equal(2, windows.GetArrayLength());
+        Assert.False(windows[0].GetProperty("visible").GetBoolean());
+        Assert.Equal(2L, windows[1].GetProperty("handle").GetInt64());
+        Assert.Equal("UnityWndClass", windows[1].GetProperty("className").GetString());
+        Assert.True(windows[1].GetProperty("visible").GetBoolean());
+        Assert.True(windows[1].GetProperty("minimized").GetBoolean());
+        Assert.Equal(1920, windows[1].GetProperty("clientWidth").GetInt32());
+        Assert.Equal(1080, windows[1].GetProperty("clientHeight").GetInt32());
+        Assert.Equal("Arknights", windows[1].GetProperty("processName").GetString());
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_directory)) Directory.Delete(_directory, true);
+    }
+}
