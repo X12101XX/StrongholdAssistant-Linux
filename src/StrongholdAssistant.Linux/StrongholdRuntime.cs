@@ -46,6 +46,7 @@ internal sealed class StrongholdRuntime : IDisposable
     private System.Drawing.RectangleF? _upgradeButton;
     private byte[]? _automaticOpeningScreenshot;
     private RECT? _lastGameRect;
+    private Connection? _lastPublishedConnection;
     private bool _closing;
     private bool _uiReady;
 
@@ -159,7 +160,7 @@ internal sealed class StrongholdRuntime : IDisposable
         };
 
         _tracker.GameWindowMoved += rect => UpdateGame(rect);
-        _tracker.GameWindowPolled += rect => UpdateGame(rect);
+        _tracker.GameWindowPolled += rect => OnGameWindowPolled(rect);
         _tracker.GameWindowLost += () =>
         {
             _scanner?.InvalidateShop();
@@ -406,6 +407,22 @@ internal sealed class StrongholdRuntime : IDisposable
         }
     }
 
+    private void OnGameWindowPolled(RECT game)
+    {
+        if (_closing) return;
+        var hwnd = _tracker.CurrentGameWindowHandle;
+        var geom = hwnd == IntPtr.Zero ? null : NiriIpc.GetWindowGeometry((ulong)hwnd);
+        // Only sync overlay geometry if window output/position/visibility actually changed;
+        // avoids 10-30x/sec redundant overlay repaints and connection broadcasts while idle.
+        _overlay.UpdateGeometry(geom);
+        if (!_lastGameRect.Equals(game))
+        {
+            _scanner?.InvalidateShop();
+            _lastGameRect = game;
+            PublishConnection();
+        }
+    }
+
     private void UpdateGame(RECT game)
     {
         if (_closing) return;
@@ -426,12 +443,15 @@ internal sealed class StrongholdRuntime : IDisposable
         if (_closing) return;
         _api.UpdateShopTracking(_shopItems);
         var items = _api.Settings.ShopMarkers ? _shopItems : [];
-        _overlay.UpdateLayerSettings(_api.Settings.OverlayLayers);
-        _overlay.UpdateShopItems(items, _api.Settings.MarkerStyles);
-        _overlay.UpdateUpgrade(_upgradeButton, _api.UpgradeTarget);
+        _overlay.UpdateRefreshState(
+            _api.Settings.OverlayLayers,
+            items,
+            _api.Settings.MarkerStyles,
+            _upgradeButton,
+            _api.UpgradeTarget);
     }
 
-    private void PublishConnection()
+    private void PublishConnection(bool force = false)
     {
         if (_closing || !_options.ConnectGame) return;
         var state = _capture.Connection.State;
@@ -441,7 +461,7 @@ internal sealed class StrongholdRuntime : IDisposable
             : _capture.Connection.IsAdb && state.Width > 0 && state.Problem is null;
         string? resolution = !connected ? null : _capture.Connection.IsAdb
             ? $"{state.Width}×{state.Height}" : $"{viewport!.Value.Width}×{viewport.Value.Height}";
-        _api.UpdateConnection(new Connection(
+        var next = new Connection(
             connected ? "connected" : "searching",
             resolution,
             connected ? _tracker.IsFullscreen : null,
@@ -449,7 +469,10 @@ internal sealed class StrongholdRuntime : IDisposable
             connected ? state.Source : null,
             state.Problem,
             connected ? "right" : null,
-            false));
+            false);
+        if (!force && next == _lastPublishedConnection) return;
+        _lastPublishedConnection = next;
+        _api.UpdateConnection(next);
     }
 
     private void PublishRecognitionError()
@@ -512,7 +535,7 @@ internal sealed class StrongholdRuntime : IDisposable
             if (request.Method == "windowCommand" && request.Params[0].GetString() == "ready")
             {
                 _uiReady = true;
-                PublishConnection();
+                PublishConnection(force: true);
                 PublishRecognitionError();
             }
 

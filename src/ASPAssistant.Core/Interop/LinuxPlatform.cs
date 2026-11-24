@@ -49,7 +49,7 @@ public static class LinuxPlatform
     [DllImport(NativeLib)] private static extern int sh_wl_capture_region(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? outputName,
         int x, int y, int w, int h,
-        byte[] outBgra, out int outW, out int outH, int maxBytes);
+        IntPtr outBgra, out int outW, out int outH, int maxBytes);
     [DllImport(NativeLib)] private static extern int sh_wl_pointer_move_abs(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? outputName,
         uint x, uint y, uint xExtent, uint yExtent);
@@ -109,45 +109,94 @@ public static class LinuxPlatform
     {
         if (physW <= 0 || physH <= 0) return null;
         var outputs = NiriIpc.GetOutputs();
-        var target = outputs.Values.FirstOrDefault(o =>
+        // Prefer exact match on output physical bounds; disambiguate scaled outputs by checking logical coordinates too.
+        NiriOutputInfo? target = null;
+        foreach (var o in outputs.Values)
         {
             int ox = (int)Math.Round(o.LogicalX * o.Scale);
             int oy = (int)Math.Round(o.LogicalY * o.Scale);
-            return physX >= ox && physX < ox + o.PhysicalWidth && physY >= oy && physY < oy + o.PhysicalHeight;
-        }) ?? outputs.Values.FirstOrDefault();
+            if (physX >= ox && physX < ox + o.PhysicalWidth && physY >= oy && physY < oy + o.PhysicalHeight)
+            {
+                if (target is null || (physX == ox && physY == oy))
+                    target = o;
+            }
+        }
+        target ??= outputs.Values.FirstOrDefault();
 
         if (target is null) return null;
         double scale = target.Scale > 0 ? target.Scale : 1.0;
-        int lx = Math.Max(0, (int)Math.Round(physX / scale) - target.LogicalX);
-        int ly = Math.Max(0, (int)Math.Round(physY / scale) - target.LogicalY);
-        int lw = Math.Max(1, (int)Math.Round(physW / scale));
-        int lh = Math.Max(1, (int)Math.Round(physH / scale));
+        int outPhysX = (int)Math.Round(target.LogicalX * scale);
+        int outPhysY = (int)Math.Round(target.LogicalY * scale);
+        int lx = Math.Clamp((int)Math.Round((physX - outPhysX) / scale), 0, Math.Max(0, target.LogicalWidth - 1));
+        int ly = Math.Clamp((int)Math.Round((physY - outPhysY) / scale), 0, Math.Max(0, target.LogicalHeight - 1));
+        int lw = Math.Clamp((int)Math.Round(physW / scale), 1, Math.Max(1, target.LogicalWidth - lx));
+        int lh = Math.Clamp((int)Math.Round(physH / scale), 1, Math.Max(1, target.LogicalHeight - ly));
+        int estPhysW = (int)Math.Round(lw * scale);
+        int estPhysH = (int)Math.Round(lh * scale);
 
         if (EnsureNativeInitialized() && sh_wl_has_screencopy() != 0)
         {
-            var bmp = CaptureViaWaylandShm(target.Name, lx, ly, lw, lh, physW, physH);
+            var bmp = CaptureViaWaylandShm(target.Name, lx, ly, lw, lh, estPhysW, estPhysH);
             if (bmp is not null) return bmp;
         }
         return CaptureViaGrim(target.Name, lx, ly, lw, lh, target.LogicalX, target.LogicalY);
     }
 
-    private static Bitmap? CaptureViaWaylandShm(string outputName, int lx, int ly, int lw, int lh, int estPhysW, int estPhysH)
+    private static unsafe Bitmap? CaptureViaWaylandShm(string outputName, int lx, int ly, int lw, int lh, int estPhysW, int estPhysH)
     {
         lock (CaptureBufferLock)
         {
-            int minBytes = Math.Max(estPhysW * estPhysH * 4, 1920 * 1080 * 4);
+            // Fast path: write directly into the target SKBitmap pixels (zero intermediate copy, zero Erase memset)
+            if (estPhysW > 0 && estPhysH > 0)
+            {
+                var directBmp = Bitmap.CreateUninitialized(estPhysW, estPhysH, PixelFormat.Format32bppArgb);
+                var directData = directBmp.LockBits(new Rectangle(0, 0, estPhysW, estPhysH), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+                int directStride = directData.Stride;
+                int directMaxBytes = checked(estPhysW * estPhysH * 4);
+                int rcDirect = -1;
+                int dow = 0, doh = 0;
+                try
+                {
+                    if (directStride == estPhysW * 4)
+                    {
+                        rcDirect = sh_wl_capture_region(outputName, lx, ly, lw, lh, directData.Scan0, out dow, out doh, directMaxBytes);
+                    }
+                }
+                finally { directBmp.UnlockBits(directData); }
+
+                if (rcDirect == 0 && dow == estPhysW && doh == estPhysH)
+                    return directBmp;
+
+                directBmp.Dispose();
+                if (rcDirect != -5 && (dow <= 0 || doh <= 0)) return null;
+                if (dow > 0 && doh > 0)
+                {
+                    estPhysW = dow;
+                    estPhysH = doh;
+                }
+            }
+
+            // Fallback when actual output dimensions differed from estimate
+            int minBytes = Math.Max(checked(estPhysW * estPhysH * 4), 1920 * 1080 * 4);
             if (_captureScratch.Length < minBytes)
                 _captureScratch = new byte[minBytes];
 
-            int rc = sh_wl_capture_region(outputName, lx, ly, lw, lh, _captureScratch, out int ow, out int oh, _captureScratch.Length);
+            int rc, ow, oh;
+            fixed (byte* pScratch = _captureScratch)
+            {
+                rc = sh_wl_capture_region(outputName, lx, ly, lw, lh, (IntPtr)pScratch, out ow, out oh, _captureScratch.Length);
+            }
             if (rc == -5 && ow > 0 && oh > 0)
             {
                 _captureScratch = new byte[checked(ow * oh * 4)];
-                rc = sh_wl_capture_region(outputName, lx, ly, lw, lh, _captureScratch, out ow, out oh, _captureScratch.Length);
+                fixed (byte* pScratch = _captureScratch)
+                {
+                    rc = sh_wl_capture_region(outputName, lx, ly, lw, lh, (IntPtr)pScratch, out ow, out oh, _captureScratch.Length);
+                }
             }
             if (rc != 0 || ow <= 0 || oh <= 0) return null;
 
-            var bmp = new Bitmap(ow, oh, PixelFormat.Format32bppArgb);
+            var bmp = Bitmap.CreateUninitialized(ow, oh, PixelFormat.Format32bppArgb);
             var data = bmp.LockBits(new Rectangle(0, 0, ow, oh), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
             try
             {

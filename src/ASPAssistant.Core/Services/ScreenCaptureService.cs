@@ -211,6 +211,10 @@ public class ScreenCaptureService
         inspect?.Invoke(resized ?? raw);
         using var stream = new MemoryStream();
         (resized ?? raw).Save(stream, scanPixels ? ImageFormat.Bmp : ImageFormat.Png);
+#if LINUX_PORT
+        if (stream.TryGetBuffer(out var seg) && seg.Offset == 0 && seg.Array is not null && seg.Count == seg.Array.Length)
+            return seg.Array;
+#endif
         return stream.ToArray();
     }
 

@@ -16,12 +16,33 @@ public sealed partial class FieldReader
 
     private static Mat NormalizeSpriteImage(System.Drawing.Bitmap bitmap)
     {
+#if LINUX_PORT
+        var data = bitmap.LockBits(new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height),
+            System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            using var bgra = Mat.FromPixelData(bitmap.Height, bitmap.Width, MatType.CV_8UC4, data.Scan0, data.Stride);
+            if (bitmap.Width == 1920 && bitmap.Height == 1080)
+            {
+                var image = new Mat();
+                Cv2.CvtColor(bgra, image, ColorConversionCodes.BGRA2BGR);
+                return image;
+            }
+            using var bgr = new Mat();
+            Cv2.CvtColor(bgra, bgr, ColorConversionCodes.BGRA2BGR);
+            var resized = new Mat();
+            Cv2.Resize(bgr, resized, new Size(1920, 1080));
+            return resized;
+        }
+        finally { bitmap.UnlockBits(data); }
+#else
         using var stream = new MemoryStream();
         bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
         using var raw = Cv2.ImDecode(stream.ToArray(), ImreadModes.Color);
         var image = new Mat();
         Cv2.Resize(raw, image, new Size(1920, 1080));
         return image;
+#endif
     }
 
     private void ReadSummons(Mat image, Dictionary<FieldCell, int> cells)

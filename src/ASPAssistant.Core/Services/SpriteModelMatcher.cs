@@ -18,6 +18,7 @@ public sealed class SpriteModelMatcher : IDisposable
     public const double AutoFillGap = .09622;
 #if LINUX_PORT
     private static int _ortResolverInstalled;
+    [ThreadStatic] private static float[]? _inputScratch;
     private readonly InferenceSession _session;
     private readonly string _inputName;
 #else
@@ -84,7 +85,7 @@ public sealed class SpriteModelMatcher : IDisposable
         const int targetH = 192;
         using var resized = new Mat();
         Cv2.Resize(crop, resized, new Size(targetW, targetH), 0, 0, InterpolationFlags.Linear);
-        var inputData = new float[3 * targetH * targetW];
+        var inputData = _inputScratch ??= new float[3 * targetH * targetW];
         const int planeSize = targetH * targetW;
         const float inv255 = 1f / 255f;
         byte* basePtr = (byte*)resized.DataPointer;

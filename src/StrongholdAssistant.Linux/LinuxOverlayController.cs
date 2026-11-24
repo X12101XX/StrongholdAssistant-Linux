@@ -36,6 +36,8 @@ internal sealed class LinuxOverlayController : IDisposable
     private OverlayLayerSettings _layerSettings = new();
     private System.Drawing.RectangleF? _upgradeButton;
     private int? _upgradeLevel;
+    private string? _lastSentFrame;
+    private readonly StringBuilder _frameBuilder = new(2048);
 
     public bool IsVisible => _visible;
     public event Action? PlacementChanged;
@@ -108,11 +110,40 @@ internal sealed class LinuxOverlayController : IDisposable
         return null;
     }
 
+    private static bool SameGeometry(NiriWindowGeometry? a, NiriWindowGeometry? b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a is null || b is null) return false;
+        return a.OnActiveWorkspace == b.OnActiveWorkspace
+            && a.LocalX == b.LocalX && a.LocalY == b.LocalY
+            && a.LocalWidth == b.LocalWidth && a.LocalHeight == b.LocalHeight
+            && string.Equals(a.Output.Name, b.Output.Name, StringComparison.Ordinal);
+    }
+
     public void UpdateGeometry(NiriWindowGeometry? geom)
     {
         lock (_gate)
         {
+            if (SameGeometry(_geom, geom)) return;
             _geom = geom;
+            RedrawLocked();
+        }
+    }
+
+    public void UpdateRefreshState(
+        OverlayLayerSettings layerSettings,
+        IReadOnlyList<ShopItem> shopItems,
+        MarkerStyles markerStyles,
+        System.Drawing.RectangleF? upgradeButton,
+        int? upgradeLevel)
+    {
+        lock (_gate)
+        {
+            _layerSettings = layerSettings;
+            _shopItems = shopItems;
+            _markerStyles = markerStyles;
+            _upgradeButton = upgradeButton;
+            _upgradeLevel = upgradeLevel;
             RedrawLocked();
         }
     }
@@ -132,6 +163,7 @@ internal sealed class LinuxOverlayController : IDisposable
         lock (_gate)
         {
             _visible = false;
+            _lastSentFrame = null;
             SendLineLocked("HIDE");
         }
     }
@@ -222,6 +254,7 @@ internal sealed class LinuxOverlayController : IDisposable
             if (_visible)
             {
                 _visible = false;
+                _lastSentFrame = null;
                 SendLineLocked("HIDE");
             }
             return;
@@ -255,25 +288,37 @@ internal sealed class LinuxOverlayController : IDisposable
             if (_visible)
             {
                 _visible = false;
+                _lastSentFrame = null;
                 SendLineLocked("HIDE");
             }
             return;
         }
 
+        _frameBuilder.Clear();
+        _frameBuilder.Append("SHOW ").Append(_geom.Output.Name).Append(' ')
+            .Append(_geom.LocalX).Append(' ').Append(_geom.LocalY).Append(' ')
+            .Append(_geom.LocalWidth).Append(' ').Append(_geom.LocalHeight).Append('\n');
+        _frameBuilder.Append("CLEAR\n");
+        foreach (var c in cmds) _frameBuilder.Append(c).Append('\n');
+        _frameBuilder.Append("COMMIT\n");
+        var payload = _frameBuilder.ToString();
+
+        if (_visible && _proc is { HasExited: false } && string.Equals(payload, _lastSentFrame, StringComparison.Ordinal))
+            return;
+
         if (!EnsureProcessLocked()) return;
 
         try
         {
-            _stdin!.WriteLine($"SHOW {_geom.Output.Name} {_geom.LocalX} {_geom.LocalY} {_geom.LocalWidth} {_geom.LocalHeight}");
-            _stdin.WriteLine("CLEAR");
-            foreach (var c in cmds) _stdin.WriteLine(c);
-            _stdin.WriteLine("COMMIT");
+            _stdin!.Write(payload);
             _stdin.Flush();
+            _lastSentFrame = payload;
             _visible = true;
         }
         catch (Exception ex)
         {
             AppLogger.Warn("Overlay", $"Failed to push overlay frame: {ex.Message}");
+            _lastSentFrame = null;
             _visible = false;
         }
     }

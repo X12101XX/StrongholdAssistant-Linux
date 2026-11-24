@@ -155,7 +155,13 @@ public sealed class ShopReader(IOcrEngine engine, IReadOnlyList<string> catalogN
         }
         using var encoded = new MemoryStream();
         strip.Save(encoded, ImageFormat.Bmp);
+#if LINUX_PORT
+        var ocrInput = encoded.TryGetBuffer(out var encSeg) && encSeg.Offset == 0 && encSeg.Array is not null && encSeg.Count == encSeg.Array.Length
+            ? encSeg.Array
+            : encoded.ToArray();
+#else
         var ocrInput = encoded.ToArray();
+#endif
         // 高分辨率缩小后，空槽纹理可能被检测成横跨整张卡片的单个 W。
         // 只排除过宽的单个英文字符；「砾」这类单字干员名不受影响。
         // 只复用完全相同的OCR输入；卡名、冻结状态或主题改变都会重新识别。

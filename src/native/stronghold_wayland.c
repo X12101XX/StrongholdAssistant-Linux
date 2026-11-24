@@ -46,6 +46,11 @@ typedef struct {
     size_t shm_size;
     void *shm_map;
     struct wl_shm_pool *shm_pool;
+    struct wl_buffer *shm_buf;
+    uint32_t shm_buf_w;
+    uint32_t shm_buf_h;
+    uint32_t shm_buf_stride;
+    uint32_t shm_buf_format;
 
     // Reusable virtual pointer / keyboard
     struct zwlr_virtual_pointer_v1 *vptr;
@@ -158,8 +163,36 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = registry_global_remove,
 };
 
+static void reset_context_locked(void) {
+    if (g_ctx.shm_buf) { wl_buffer_destroy(g_ctx.shm_buf); g_ctx.shm_buf = NULL; }
+    g_ctx.shm_buf_w = g_ctx.shm_buf_h = g_ctx.shm_buf_stride = g_ctx.shm_buf_format = 0;
+    if (g_ctx.shm_pool) { wl_shm_pool_destroy(g_ctx.shm_pool); g_ctx.shm_pool = NULL; }
+    if (g_ctx.shm_map && g_ctx.shm_map != MAP_FAILED) { munmap(g_ctx.shm_map, g_ctx.shm_size); g_ctx.shm_map = NULL; }
+    if (g_ctx.shm_fd >= 0) { close(g_ctx.shm_fd); g_ctx.shm_fd = -1; }
+    g_ctx.shm_size = 0;
+    if (g_ctx.vptr) { zwlr_virtual_pointer_v1_destroy(g_ctx.vptr); g_ctx.vptr = NULL; }
+    g_ctx.vptr_output_name[0] = '\0';
+    if (g_ctx.vkbd) { zwp_virtual_keyboard_v1_destroy(g_ctx.vkbd); g_ctx.vkbd = NULL; }
+    g_ctx.vkbd_keymap_sent = false;
+    for (int i = 0; i < g_ctx.output_count; i++) {
+        if (g_ctx.outputs[i].output) wl_output_destroy(g_ctx.outputs[i].output);
+    }
+    g_ctx.output_count = 0;
+    if (g_ctx.screencopy_mgr) { zwlr_screencopy_manager_v1_destroy(g_ctx.screencopy_mgr); g_ctx.screencopy_mgr = NULL; }
+    if (g_ctx.vptr_mgr) { zwlr_virtual_pointer_manager_v1_destroy(g_ctx.vptr_mgr); g_ctx.vptr_mgr = NULL; }
+    if (g_ctx.vkbd_mgr) { zwp_virtual_keyboard_manager_v1_destroy(g_ctx.vkbd_mgr); g_ctx.vkbd_mgr = NULL; }
+    if (g_ctx.shm) { wl_shm_destroy(g_ctx.shm); g_ctx.shm = NULL; }
+    if (g_ctx.seat) { wl_seat_destroy(g_ctx.seat); g_ctx.seat = NULL; }
+    if (g_ctx.registry) { wl_registry_destroy(g_ctx.registry); g_ctx.registry = NULL; }
+    if (g_ctx.display) { wl_display_disconnect(g_ctx.display); g_ctx.display = NULL; }
+    g_ctx.initialized = false;
+}
+
 static bool ensure_init_locked(void) {
-    if (g_ctx.initialized && g_ctx.display) return true;
+    if (g_ctx.initialized && g_ctx.display) {
+        if (wl_display_get_error(g_ctx.display) == 0) return true;
+        reset_context_locked();
+    }
     g_ctx.display = wl_display_connect(NULL);
     if (!g_ctx.display) return false;
     g_ctx.registry = wl_display_get_registry(g_ctx.display);
@@ -276,6 +309,8 @@ static const struct zwlr_screencopy_frame_v1_listener frame_listener = {
 
 static bool ensure_shm_locked(size_t needed) {
     if (g_ctx.shm_pool && g_ctx.shm_size >= needed) return true;
+    if (g_ctx.shm_buf) { wl_buffer_destroy(g_ctx.shm_buf); g_ctx.shm_buf = NULL; }
+    g_ctx.shm_buf_w = g_ctx.shm_buf_h = g_ctx.shm_buf_stride = g_ctx.shm_buf_format = 0;
     if (g_ctx.shm_pool) { wl_shm_pool_destroy(g_ctx.shm_pool); g_ctx.shm_pool = NULL; }
     if (g_ctx.shm_map && g_ctx.shm_map != MAP_FAILED) { munmap(g_ctx.shm_map, g_ctx.shm_size); g_ctx.shm_map = NULL; }
     if (g_ctx.shm_fd >= 0) { close(g_ctx.shm_fd); g_ctx.shm_fd = -1; }
@@ -294,6 +329,24 @@ static bool ensure_shm_locked(size_t needed) {
     return g_ctx.shm_pool != NULL;
 }
 
+static struct wl_buffer *ensure_shm_buffer_locked(uint32_t w, uint32_t h, uint32_t stride, uint32_t format) {
+    if (g_ctx.shm_buf
+        && g_ctx.shm_buf_w == w && g_ctx.shm_buf_h == h
+        && g_ctx.shm_buf_stride == stride && g_ctx.shm_buf_format == format) {
+        return g_ctx.shm_buf;
+    }
+    if (g_ctx.shm_buf) { wl_buffer_destroy(g_ctx.shm_buf); g_ctx.shm_buf = NULL; }
+    g_ctx.shm_buf = wl_shm_pool_create_buffer(
+        g_ctx.shm_pool, 0, (int32_t)w, (int32_t)h, (int32_t)stride, format);
+    if (g_ctx.shm_buf) {
+        g_ctx.shm_buf_w = w;
+        g_ctx.shm_buf_h = h;
+        g_ctx.shm_buf_stride = stride;
+        g_ctx.shm_buf_format = format;
+    }
+    return g_ctx.shm_buf;
+}
+
 int sh_wl_capture_region(const char *output_name, int32_t x, int32_t y, int32_t w, int32_t h,
     uint8_t *out_bgra, int32_t *out_w, int32_t *out_h, int32_t max_bytes) {
     pthread_mutex_lock(&g_ctx.lock);
@@ -307,8 +360,22 @@ int sh_wl_capture_region(const char *output_name, int32_t x, int32_t y, int32_t 
         return -2;
     }
 
+    int32_t scale = entry->scale > 0 ? entry->scale : 1;
+    int32_t logical_w = entry->mode_w > 0 ? (entry->mode_w / scale) : 0;
+    int32_t logical_h = entry->mode_h > 0 ? (entry->mode_h / scale) : 0;
+    bool full_output = (w <= 0 || h <= 0)
+        || (x <= 0 && y <= 0 && logical_w > 0 && logical_h > 0 && w >= logical_w && h >= logical_h);
+
     struct zwlr_screencopy_frame_v1 *frame;
-    if (w > 0 && h > 0) {
+    if (!full_output) {
+        if (x < 0) { w += x; x = 0; }
+        if (y < 0) { h += y; y = 0; }
+        if (logical_w > 0 && x + w > logical_w) w = logical_w - x;
+        if (logical_h > 0 && y + h > logical_h) h = logical_h - y;
+        if (w <= 0 || h <= 0) {
+            pthread_mutex_unlock(&g_ctx.lock);
+            return -3;
+        }
         frame = zwlr_screencopy_manager_v1_capture_output_region(
             g_ctx.screencopy_mgr, 0 /* no cursor */, entry->output, x, y, w, h);
     } else {
@@ -348,8 +415,7 @@ int sh_wl_capture_region(const char *output_name, int32_t x, int32_t y, int32_t 
         return -6;
     }
 
-    struct wl_buffer *buffer = wl_shm_pool_create_buffer(
-        g_ctx.shm_pool, 0, (int32_t)st.width, (int32_t)st.height, (int32_t)st.stride, st.format);
+    struct wl_buffer *buffer = ensure_shm_buffer_locked(st.width, st.height, st.stride, st.format);
     if (!buffer) {
         zwlr_screencopy_frame_v1_destroy(frame);
         pthread_mutex_unlock(&g_ctx.lock);
@@ -371,27 +437,27 @@ int sh_wl_capture_region(const char *output_name, int32_t x, int32_t y, int32_t 
         bool invert_y = (st.flags & ZWLR_SCREENCOPY_FRAME_V1_FLAGS_Y_INVERT) != 0;
         bool swap_rb = (st.format == WL_SHM_FORMAT_ABGR8888 || st.format == WL_SHM_FORMAT_XBGR8888);
         const uint8_t *src_base = (const uint8_t *)g_ctx.shm_map;
+        const uint32_t width = st.width;
         for (uint32_t row = 0; row < st.height; row++) {
             uint32_t src_row = invert_y ? (st.height - 1 - row) : row;
-            const uint8_t *s = src_base + (size_t)src_row * st.stride;
-            uint8_t *d = out_bgra + (size_t)row * st.width * 4;
+            const uint32_t *s32 = (const uint32_t *)(src_base + (size_t)src_row * st.stride);
+            uint32_t *d32 = (uint32_t *)(out_bgra + (size_t)row * width * 4);
             if (!swap_rb) {
-                // ARGB8888 / XRGB8888 on little-endian is already BGRA in memory!
-                memcpy(d, s, (size_t)st.width * 4);
-                for (uint32_t col = 0; col < st.width; col++) d[col * 4 + 3] = 255;
+                for (uint32_t col = 0; col < width; col++) {
+                    d32[col] = s32[col] | 0xFF000000u;
+                }
             } else {
-                // ABGR8888 / XBGR8888 on little-endian is RGBA -> convert to BGRA
-                for (uint32_t col = 0; col < st.width; col++) {
-                    d[col * 4 + 0] = s[col * 4 + 2];
-                    d[col * 4 + 1] = s[col * 4 + 1];
-                    d[col * 4 + 2] = s[col * 4 + 0];
-                    d[col * 4 + 3] = 255;
+                for (uint32_t col = 0; col < width; col++) {
+                    uint32_t v = s32[col];
+                    d32[col] = ((v & 0x00FF0000u) >> 16)
+                             | (v & 0x0000FF00u)
+                             | ((v & 0x000000FFu) << 16)
+                             | 0xFF000000u;
                 }
             }
         }
     }
 
-    wl_buffer_destroy(buffer);
     zwlr_screencopy_frame_v1_destroy(frame);
     pthread_mutex_unlock(&g_ctx.lock);
     return rc;

@@ -253,7 +253,8 @@ namespace System.Drawing
             var skFormat = ReferenceEquals(format, ImageFormat.Jpeg)
                 ? SKEncodedImageFormat.Jpeg
                 : SKEncodedImageFormat.Png;
-            using var img = SKImage.FromBitmap(SkBitmap);
+            using var pixmap = SkBitmap.PeekPixels();
+            using var img = pixmap is not null ? SKImage.FromPixels(pixmap) : SKImage.FromBitmap(SkBitmap);
             using var data = img.Encode(skFormat, 95);
             data.SaveTo(stream);
         }
@@ -282,6 +283,65 @@ namespace System.Drawing
             int pixelBytes = rowStride * h;
             int fileSize = 54 + pixelBytes;
 
+            byte* srcBase = (byte*)bitmap.GetPixels().ToPointer();
+            int srcRowBytes = bitmap.RowBytes;
+
+            // Fast path: write directly into a pre-sized MemoryStream buffer (eliminates ~15 doubling reallocs & row copies)
+            if (stream is MemoryStream ms && ms.CanWrite)
+            {
+                long startPos = ms.Position;
+                long endPos = startPos + fileSize;
+                if (endPos <= int.MaxValue)
+                {
+                    if (ms.Capacity < (int)endPos) ms.Capacity = (int)endPos;
+                    if (ms.Length < endPos) ms.SetLength(endPos);
+                    if (ms.TryGetBuffer(out var seg) && seg.Array is not null)
+                    {
+                        int baseOff = seg.Offset + (int)startPos;
+                        var hdr = seg.Array.AsSpan(baseOff, 54);
+                        hdr.Clear();
+                        hdr[0] = (byte)'B';
+                        hdr[1] = (byte)'M';
+                        BitConverter.TryWriteBytes(hdr[2..], fileSize);
+                        BitConverter.TryWriteBytes(hdr[10..], 54);
+                        BitConverter.TryWriteBytes(hdr[14..], 40);
+                        BitConverter.TryWriteBytes(hdr[18..], w);
+                        BitConverter.TryWriteBytes(hdr[22..], h); // standard bottom-up DIB (matches Windows GDI+)
+                        BitConverter.TryWriteBytes(hdr[26..], (short)1);
+                        BitConverter.TryWriteBytes(hdr[28..], (short)bpp);
+                        BitConverter.TryWriteBytes(hdr[34..], pixelBytes);
+
+                        fixed (byte* dstArr = seg.Array)
+                        {
+                            byte* dstPixels = dstArr + baseOff + 54;
+                            int rowBytes32 = w * 4;
+                            for (int dstRowIdx = 0; dstRowIdx < h; dstRowIdx++)
+                            {
+                                int srcY = h - 1 - dstRowIdx;
+                                byte* srcRow = srcBase + (long)srcY * srcRowBytes;
+                                byte* dstRow = dstPixels + (long)dstRowIdx * rowStride;
+                                if (bytesPerPixel == 4)
+                                {
+                                    Buffer.MemoryCopy(srcRow, dstRow, rowStride, rowBytes32);
+                                }
+                                else
+                                {
+                                    for (int x = 0; x < w; x++)
+                                    {
+                                        dstRow[x * 3 + 0] = srcRow[x * 4 + 0];
+                                        dstRow[x * 3 + 1] = srcRow[x * 4 + 1];
+                                        dstRow[x * 3 + 2] = srcRow[x * 4 + 2];
+                                    }
+                                    for (int p = w * 3; p < rowStride; p++) dstRow[p] = 0;
+                                }
+                            }
+                        }
+                        ms.Position = endPos;
+                        return;
+                    }
+                }
+            }
+
             Span<byte> header = stackalloc byte[54];
             header.Clear();
             header[0] = (byte)'B';
@@ -296,26 +356,28 @@ namespace System.Drawing
             BitConverter.TryWriteBytes(header[34..], pixelBytes);
             stream.Write(header);
 
-            byte* srcBase = (byte*)bitmap.GetPixels().ToPointer();
-            int srcRowBytes = bitmap.RowBytes;
-            byte[] rowBuf = new byte[rowStride];
-            for (int y = h - 1; y >= 0; y--)
+            if (bytesPerPixel == 4)
             {
-                byte* srcRow = srcBase + y * srcRowBytes;
-                if (bytesPerPixel == 4)
+                for (int y = h - 1; y >= 0; y--)
                 {
-                    Marshal.Copy((IntPtr)srcRow, rowBuf, 0, w * 4);
+                    byte* srcRow = srcBase + (long)y * srcRowBytes;
+                    stream.Write(new ReadOnlySpan<byte>(srcRow, w * 4));
                 }
-                else
+            }
+            else
+            {
+                byte[] rowBuf = new byte[rowStride];
+                for (int y = h - 1; y >= 0; y--)
                 {
+                    byte* srcRow = srcBase + (long)y * srcRowBytes;
                     for (int x = 0; x < w; x++)
                     {
                         rowBuf[x * 3 + 0] = srcRow[x * 4 + 0];
                         rowBuf[x * 3 + 1] = srcRow[x * 4 + 1];
                         rowBuf[x * 3 + 2] = srcRow[x * 4 + 2];
                     }
+                    stream.Write(rowBuf, 0, rowStride);
                 }
-                stream.Write(rowBuf, 0, rowStride);
             }
         }
 
@@ -334,6 +396,9 @@ namespace System.Drawing
             SkBitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
             SkBitmap.Erase(SKColors.Transparent);
         }
+
+        internal static Bitmap CreateUninitialized(int width, int height, PixelFormat format = PixelFormat.Format32bppArgb)
+            => new(new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul)), format);
 
         public Bitmap(string filename)
         {
@@ -361,7 +426,8 @@ namespace System.Drawing
             PixelFormat = original.PixelFormat;
             SkBitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
             using var canvas = new SKCanvas(SkBitmap);
-            using var srcImg = SKImage.FromBitmap(original.SkBitmap);
+            using var pixmap = original.SkBitmap.PeekPixels();
+            using var srcImg = pixmap is not null ? SKImage.FromPixels(pixmap) : SKImage.FromBitmap(original.SkBitmap);
             canvas.DrawImage(srcImg, new SKRect(0, 0, width, height), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
         }
 
@@ -373,39 +439,88 @@ namespace System.Drawing
             PixelFormat = format;
         }
 
-        private static SKBitmap DecodeToBgraUnpremul(Stream stream)
+        private static unsafe SKBitmap DecodeToBgraUnpremul(Stream stream)
         {
-            if (stream.CanSeek) stream.Position = 0;
-            using var ms = new MemoryStream();
-            stream.CopyTo(ms);
-            var bytes = ms.ToArray();
-            if (bytes.Length >= 54 && bytes[0] == (byte)'B' && bytes[1] == (byte)'M')
+            if (stream.CanSeek)
             {
-                var bmp = TryDecodeBmp(bytes);
+                stream.Position = 0;
+                if (stream.Length >= 54)
+                {
+                    var bmpDirect = TryDecodeBmpFromSeekableStream(stream);
+                    if (bmpDirect is not null) return bmpDirect;
+                    stream.Position = 0;
+                }
+            }
+
+            byte[] bytes;
+            int offset;
+            int count;
+            if (stream is MemoryStream existingMs && existingMs.TryGetBuffer(out var seg) && seg.Array is not null)
+            {
+                bytes = seg.Array;
+                offset = seg.Offset;
+                count = seg.Count;
+            }
+            else
+            {
+                if (stream.CanSeek) stream.Position = 0;
+                using var ms = stream.CanSeek && stream.Length is > 0 and <= int.MaxValue
+                    ? new MemoryStream((int)stream.Length)
+                    : new MemoryStream();
+                stream.CopyTo(ms);
+                if (ms.TryGetBuffer(out var seg2) && seg2.Array is not null)
+                {
+                    bytes = seg2.Array;
+                    offset = seg2.Offset;
+                    count = seg2.Count;
+                }
+                else
+                {
+                    bytes = ms.ToArray();
+                    offset = 0;
+                    count = bytes.Length;
+                }
+            }
+
+            if (count >= 54 && bytes[offset] == (byte)'B' && bytes[offset + 1] == (byte)'M')
+            {
+                var bmp = TryDecodeBmp(bytes, offset, count);
                 if (bmp is not null) return bmp;
             }
-            using var data = SKData.CreateCopy(bytes);
-            using var codec = SKCodec.Create(data) ?? throw new ArgumentException("Unable to decode image stream.");
-            var info = new SKImageInfo(codec.Info.Width, codec.Info.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
-            var bitmap = new SKBitmap(info);
-            var result = codec.GetPixels(info, bitmap.GetPixels());
-            if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput)
+            SKData data;
+            fixed (byte* ptr = bytes)
             {
-                bitmap.Dispose();
-                throw new ArgumentException($"Image decode failed: {result}");
+                data = SKData.CreateCopy((IntPtr)(ptr + offset), (ulong)count);
             }
-            return bitmap;
+            using (data)
+            using (var codec = SKCodec.Create(data) ?? throw new ArgumentException("Unable to decode image stream."))
+            {
+                var info = new SKImageInfo(codec.Info.Width, codec.Info.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+                var bitmap = new SKBitmap(info);
+                var result = codec.GetPixels(info, bitmap.GetPixels());
+                if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput)
+                {
+                    bitmap.Dispose();
+                    throw new ArgumentException($"Image decode failed: {result}");
+                }
+                return bitmap;
+            }
         }
 
-        private static unsafe SKBitmap? TryDecodeBmp(byte[] bytes)
+        private static unsafe SKBitmap? TryDecodeBmpFromSeekableStream(Stream stream)
         {
-            int dataOffset = BitConverter.ToInt32(bytes, 10);
-            int dibSize = BitConverter.ToInt32(bytes, 14);
-            if (dibSize < 40 || dataOffset < 54 || dataOffset >= bytes.Length) return null;
-            int width = BitConverter.ToInt32(bytes, 18);
-            int rawHeight = BitConverter.ToInt32(bytes, 22);
-            short bpp = BitConverter.ToInt16(bytes, 28);
-            int compression = BitConverter.ToInt32(bytes, 30);
+            Span<byte> hdr = stackalloc byte[54];
+            if (stream.Read(hdr) < 54 || hdr[0] != (byte)'B' || hdr[1] != (byte)'M')
+                return null;
+
+            int dataOffset = BitConverter.ToInt32(hdr[10..]);
+            int dibSize = BitConverter.ToInt32(hdr[14..]);
+            long totalLen = stream.Length;
+            if (dibSize < 40 || dataOffset < 54 || dataOffset >= totalLen) return null;
+            int width = BitConverter.ToInt32(hdr[18..]);
+            int rawHeight = BitConverter.ToInt32(hdr[22..]);
+            short bpp = BitConverter.ToInt16(hdr[28..]);
+            int compression = BitConverter.ToInt32(hdr[30..]);
             if (width <= 0 || rawHeight == 0 || (bpp != 24 && bpp != 32) || (compression != 0 && compression != 3))
                 return null;
 
@@ -413,19 +528,85 @@ namespace System.Drawing
             int height = Math.Abs(rawHeight);
             int bytesPerPixel = bpp / 8;
             int srcStride = (width * bytesPerPixel + 3) & ~3;
-            if ((long)dataOffset + (long)srcStride * height > bytes.Length) return null;
+            if ((long)dataOffset + (long)srcStride * height > totalLen) return null;
+
+            stream.Position = dataOffset;
+            var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+            byte* dstBase = (byte*)bitmap.GetPixels().ToPointer();
+            int dstStride = bitmap.RowBytes;
+
+            if (bytesPerPixel == 4 && srcStride == width * 4)
+            {
+                int rowBytes = width * 4;
+                for (int srcY = 0; srcY < height; srcY++)
+                {
+                    int dstY = topDown ? srcY : (height - 1 - srcY);
+                    var dstSpan = new Span<byte>(dstBase + (long)dstY * dstStride, rowBytes);
+                    stream.ReadExactly(dstSpan);
+                }
+                return bitmap;
+            }
+
+            byte[] rowBuf = System.Buffers.ArrayPool<byte>.Shared.Rent(srcStride);
+            try
+            {
+                for (int srcY = 0; srcY < height; srcY++)
+                {
+                    int dstY = topDown ? srcY : (height - 1 - srcY);
+                    stream.ReadExactly(rowBuf, 0, srcStride);
+                    byte* dstRow = dstBase + (long)dstY * dstStride;
+                    if (bytesPerPixel == 4)
+                    {
+                        Marshal.Copy(rowBuf, 0, (IntPtr)dstRow, width * 4);
+                    }
+                    else
+                    {
+                        for (int x = 0; x < width; x++)
+                        {
+                            dstRow[x * 4 + 0] = rowBuf[x * 3 + 0];
+                            dstRow[x * 4 + 1] = rowBuf[x * 3 + 1];
+                            dstRow[x * 4 + 2] = rowBuf[x * 3 + 2];
+                            dstRow[x * 4 + 3] = 255;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rowBuf);
+            }
+            return bitmap;
+        }
+
+        private static unsafe SKBitmap? TryDecodeBmp(byte[] bytes, int offset, int count)
+        {
+            int dataOffset = BitConverter.ToInt32(bytes, offset + 10);
+            int dibSize = BitConverter.ToInt32(bytes, offset + 14);
+            if (dibSize < 40 || dataOffset < 54 || dataOffset >= count) return null;
+            int width = BitConverter.ToInt32(bytes, offset + 18);
+            int rawHeight = BitConverter.ToInt32(bytes, offset + 22);
+            short bpp = BitConverter.ToInt16(bytes, offset + 28);
+            int compression = BitConverter.ToInt32(bytes, offset + 30);
+            if (width <= 0 || rawHeight == 0 || (bpp != 24 && bpp != 32) || (compression != 0 && compression != 3))
+                return null;
+
+            bool topDown = rawHeight < 0;
+            int height = Math.Abs(rawHeight);
+            int bytesPerPixel = bpp / 8;
+            int srcStride = (width * bytesPerPixel + 3) & ~3;
+            if ((long)dataOffset + (long)srcStride * height > count) return null;
 
             var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul));
             byte* dstBase = (byte*)bitmap.GetPixels().ToPointer();
             int dstStride = bitmap.RowBytes;
-            fixed (byte* srcFile = bytes)
+            fixed (byte* srcArr = bytes)
             {
-                byte* srcPixels = srcFile + dataOffset;
+                byte* srcPixels = srcArr + offset + dataOffset;
                 for (int y = 0; y < height; y++)
                 {
                     int srcY = topDown ? y : (height - 1 - y);
-                    byte* srcRow = srcPixels + srcY * srcStride;
-                    byte* dstRow = dstBase + y * dstStride;
+                    byte* srcRow = srcPixels + (long)srcY * srcStride;
+                    byte* dstRow = dstBase + (long)y * dstStride;
                     if (bytesPerPixel == 4)
                     {
                         Buffer.MemoryCopy(srcRow, dstRow, dstStride, width * 4);
@@ -626,12 +807,24 @@ namespace System.Drawing
             return new SKPaint { ColorFilter = SKColorFilter.CreateColorMatrix(sk) };
         }
 
+        private void DrawSkBitmap(Image image, SKRect s, SKRect d, SKPaint? paint = null)
+        {
+            if (!ReferenceEquals(image, _target) && image.SkBitmap.PeekPixels() is { } pixmap)
+            {
+                using (pixmap)
+                using (var skImage = SKImage.FromPixels(pixmap))
+                    _canvas.DrawImage(skImage, s, d, Sampling, paint);
+                return;
+            }
+            using var copyImage = SKImage.FromBitmap(image.SkBitmap);
+            _canvas.DrawImage(copyImage, s, d, Sampling, paint);
+        }
+
         public void DrawImage(Image image, RectangleF destRect, RectangleF srcRect, GraphicsUnit srcUnit)
         {
-            using var skImage = SKImage.FromBitmap(image.SkBitmap);
             var s = new SKRect(srcRect.Left, srcRect.Top, srcRect.Right, srcRect.Bottom);
             var d = new SKRect(destRect.Left, destRect.Top, destRect.Right, destRect.Bottom);
-            _canvas.DrawImage(skImage, s, d, Sampling);
+            DrawSkBitmap(image, s, d);
         }
 
         public void DrawImage(Image image, Rectangle destRect, Rectangle srcRect, GraphicsUnit srcUnit)
@@ -642,11 +835,10 @@ namespace System.Drawing
 
         public void DrawImage(Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes? imageAttr = null)
         {
-            using var skImage = SKImage.FromBitmap(image.SkBitmap);
             var s = new SKRect(srcX, srcY, srcX + srcWidth, srcY + srcHeight);
             var d = new SKRect(destRect.Left, destRect.Top, destRect.Right, destRect.Bottom);
             using var paint = BuildImagePaint(imageAttr);
-            _canvas.DrawImage(skImage, s, d, Sampling, paint);
+            DrawSkBitmap(image, s, d, paint);
         }
 
         public void DrawImage(Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes? imageAttr = null)

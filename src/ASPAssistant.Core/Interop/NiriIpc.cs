@@ -54,16 +54,21 @@ public static class NiriIpc
 {
     private static readonly object SnapshotLock = new();
     private static long _snapshotAtMs;
+    private static long _outputsAtMs;
     private static IReadOnlyDictionary<string, NiriOutputInfo> _outputs = new Dictionary<string, NiriOutputInfo>();
     private static IReadOnlyDictionary<ulong, NiriWorkspaceInfo> _workspaces = new Dictionary<ulong, NiriWorkspaceInfo>();
     private static IReadOnlyList<NiriWindowInfo> _windows = [];
     private static ulong _focusedWindowId;
-    private const int CacheTtlMs = 40;
+    private const int CacheTtlMs = 80;
+    private const int OutputsCacheTtlMs = 2000;
+    private static readonly byte[] ReqOutputs = Encoding.UTF8.GetBytes("\"Outputs\"\n");
+    private static readonly byte[] ReqWorkspaces = Encoding.UTF8.GetBytes("\"Workspaces\"\n");
+    private static readonly byte[] ReqWindows = Encoding.UTF8.GetBytes("\"Windows\"\n");
 
     public static string? SocketPath => Environment.GetEnvironmentVariable("NIRI_SOCKET");
     public static bool IsAvailable => !string.IsNullOrEmpty(SocketPath) && File.Exists(SocketPath);
 
-    private static string? SendRequest(string jsonRequest)
+    private static string? SendRequest(byte[] payload)
     {
         var path = SocketPath;
         if (string.IsNullOrEmpty(path)) return null;
@@ -74,7 +79,6 @@ public static class NiriIpc
             socket.SendTimeout = 1000;
             socket.Connect(new UnixDomainSocketEndPoint(path));
             using var stream = new NetworkStream(socket, ownsSocket: false);
-            var payload = Encoding.UTF8.GetBytes(jsonRequest + "\n");
             stream.Write(payload, 0, payload.Length);
             stream.Flush();
             using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
@@ -82,10 +86,13 @@ public static class NiriIpc
         }
         catch (Exception ex)
         {
-            AppLogger.Warn("NiriIpc", $"IPC request failed ({jsonRequest}): {ex.Message}");
+            AppLogger.Warn("NiriIpc", $"IPC request failed: {ex.Message}");
             return null;
         }
     }
+
+    private static string? SendRequest(string jsonRequest)
+        => SendRequest(Encoding.UTF8.GetBytes(jsonRequest + "\n"));
 
     public static void InvalidateCache()
     {
@@ -97,15 +104,31 @@ public static class NiriIpc
         var now = Environment.TickCount64;
         if (!force && now - _snapshotAtMs < CacheTtlMs) return;
 
-        var outputsJson = SendRequest("\"Outputs\"");
-        var workspacesJson = SendRequest("\"Workspaces\"");
-        var windowsJson = SendRequest("\"Windows\"");
+        var workspacesJson = SendRequest(ReqWorkspaces);
+        var windowsJson = SendRequest(ReqWindows);
 
-        var outputs = ParseOutputs(outputsJson);
         var workspaces = ParseWorkspaces(workspacesJson);
         var windows = ParseWindows(windowsJson);
 
-        _outputs = outputs;
+        bool needOutputs = force || _outputs.Count == 0 || (now - _outputsAtMs >= OutputsCacheTtlMs);
+        if (!needOutputs)
+        {
+            foreach (var ws in workspaces.Values)
+            {
+                if (ws.Output is { } outName && !_outputs.ContainsKey(outName))
+                {
+                    needOutputs = true;
+                    break;
+                }
+            }
+        }
+        if (needOutputs)
+        {
+            var outputsJson = SendRequest(ReqOutputs);
+            _outputs = ParseOutputs(outputsJson);
+            _outputsAtMs = now;
+        }
+
         _workspaces = workspaces;
         _windows = windows;
         _focusedWindowId = windows.FirstOrDefault(w => w.IsFocused)?.Id ?? 0;
