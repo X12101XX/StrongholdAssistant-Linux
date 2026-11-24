@@ -620,7 +620,11 @@ public class OcrScannerService : IDisposable
             bool visible;
             using (strip.Image) visible = RoundEnemyReader.PanelVisible(strip.Image, strip.Scale);
             if (!visible || _captureService.CaptureRegion((w, h) => new(0, 0, w, h)) is not { } full) return;
+#if LINUX_PORT
+            using (full.Image) Volatile.Write(ref _pendingEnemyFrame, _captureService.EncodeCapture(full.Image, scanPixels: true));
+#else
             using (full.Image) Volatile.Write(ref _pendingEnemyFrame, _captureService.EncodeCapture(full.Image));
+#endif
         }
         finally { Interlocked.Exchange(ref _probing, 0); }
     }

@@ -73,6 +73,21 @@ public static class ShopLayout
             }
             return hits >= 14;
         }
-        return Edge(card.Left) && Edge(card.Right);
+        if (!Edge(card.Left) || !Edge(card.Right)) return false;
+        // 可露希尔售罄空槽（NO INFO）同样带亮蓝边框，但槽内为深蓝暗底；通过内部亮度排除空槽，避免误报商店识别失败。
+        if (theme == GameShopTheme.Closure)
+        {
+            int bright = 0;
+            for (int r = 0; r < 8; r++)
+                for (int c = 0; c < 8; c++)
+                {
+                    int x = Math.Clamp((int)(card.Left + card.Width * (0.15 + c * 0.10)), 0, image.Width - 1);
+                    int y = Math.Clamp((int)(card.Top + card.Height * (0.18 + r * 0.085)), 0, image.Height - 1);
+                    var p = image.GetPixel(x, y);
+                    if ((p.R * 77 + p.G * 150 + p.B * 29) >> 8 > 75) bright++;
+                }
+            if (bright < 12) return false;
+        }
+        return true;
     }
 }

@@ -247,6 +247,22 @@ internal sealed class StrongholdRuntime : IDisposable
         _scanner.ObserveMatchFrameAsync = _api.ObserveMatchFrameAsync;
         _scanner.ObserveEnemyFrameAsync = _api.ObserveEnemyFrameAsync;
         _scanner.EnemyPanelSeen += _api.CountEnemyPanel;
+        _scanner.ProbeBlocked = screen =>
+        {
+            var game = _tracker.CurrentGameWindowHandle;
+            if (game == IntPtr.Zero || !NiriIpc.IsAvailable) return false;
+            var wins = NiriIpc.GetWindows();
+            var gameWin = wins.FirstOrDefault(w => w.Id == (ulong)game);
+            var appWin = wins.FirstOrDefault(w =>
+                w.AppId.Equals("stronghold-assistant", StringComparison.OrdinalIgnoreCase)
+                || w.Title.Contains("高效雅雅", StringComparison.Ordinal));
+            if (gameWin is null || appWin is not { IsFloating: true } || appWin.WorkspaceId != gameWin.WorkspaceId)
+                return false;
+            var appGeom = NiriIpc.GetWindowGeometry(appWin.Id);
+            if (appGeom is null) return false;
+            var r = appGeom.PhysicalRect;
+            return r.Left < screen.Right && r.Right > screen.Left && r.Top < screen.Bottom && r.Bottom > screen.Top;
+        };
         _scanner.ObserveFieldAsync = _api.ObserveFieldAsync;
 
         void ConfigureCollection()

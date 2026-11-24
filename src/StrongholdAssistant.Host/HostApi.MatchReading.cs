@@ -90,7 +90,8 @@ public sealed partial class HostApi
 
     public async Task ObserveEnemyFrameAsync(byte[] frame, EconomyReading reading)
     {
-        if (!reading.IsRest || Match.Economy is not { } economy || reading.Round != economy.Round) return;
+        // 回合数字偶尔单帧漏读（如 Closure 字体 7 误读为 Z）时，允许沿用已确认的当前休整回合，避免整次悬停被静默丢弃。
+        if (!reading.IsRest || Match.Economy is not { } economy || (reading.Round is { } r && r != economy.Round)) return;
         string? match = _activeRecord;
         int generation = _matchReadingGeneration;
         var key = (match, (int?)economy.Round);
@@ -142,6 +143,80 @@ public sealed partial class HostApi
         }
     }
 
+    private string? ResolveRoundEnemyName(int round, string raw, Dictionary<string, string> catalog, string[] roundPool)
+    {
+        var clean = raw.Replace(" ", "")
+            .Replace("茲", "兹").Replace("薩", "萨").Replace("榭", "谢").Replace("劍", "剑")
+            .Replace("組", "组").Replace("長", "长").Replace("鋒", "锋").Replace("師", "师");
+        if (clean.Length == 0) return null;
+        if (catalog.ContainsKey(clean)) return clean;
+
+        // 优先在本回合可能怪组中纠偏（单字/双字 OCR 笔误，如「萨卡兹大利手」->「萨卡兹大剑手」）。
+        if (clean.Length >= 3 && roundPool.Length > 0)
+        {
+            var matched = BestFuzzyEnemy(clean, roundPool, allowLoose: true);
+            if (matched is not null) return matched;
+        }
+        // 其次在全敌人图鉴中严格纠偏（避免把测试中的虚构名误匹配到无关敌人）。
+        if (clean.Length >= 4)
+        {
+            var matched = BestFuzzyEnemy(clean, catalog.Keys, allowLoose: false);
+            if (matched is not null) return matched;
+        }
+        // 保留非图鉴多字读数（兼容单元测试及新敌人），丢弃明显单字噪点。
+        return clean.Length <= 1 ? null : clean;
+    }
+
+    private static string? BestFuzzyEnemy(string query, IEnumerable<string> candidates, bool allowLoose)
+    {
+        int maxDist = allowLoose
+            ? (query.Length <= 3 ? 1 : query.Length <= 6 ? 2 : 3)
+            : (query.Length <= 6 ? 1 : 2);
+        string? best = null;
+        int bestDist = int.MaxValue;
+        bool tied = false;
+
+        foreach (var cand in candidates)
+        {
+            if (Math.Abs(cand.Length - query.Length) > maxDist) continue;
+            int d = EditDistance(query, cand);
+            if (d > maxDist) continue;
+            int maxLen = Math.Max(query.Length, cand.Length);
+            double similarity = 1.0 - (double)d / maxLen;
+            if (similarity < (allowLoose ? 0.55 : 0.72)) continue;
+            if (d < bestDist)
+            {
+                bestDist = d;
+                best = cand;
+                tied = false;
+            }
+            else if (d == bestDist && cand != best)
+            {
+                tied = true;
+            }
+        }
+        return tied ? null : best;
+    }
+
+    private static int EditDistance(string a, string b)
+    {
+        int n = a.Length, m = b.Length;
+        Span<int> prev = m + 1 <= 64 ? stackalloc int[m + 1] : new int[m + 1];
+        Span<int> curr = m + 1 <= 64 ? stackalloc int[m + 1] : new int[m + 1];
+        for (int j = 0; j <= m; j++) prev[j] = j;
+        for (int i = 1; i <= n; i++)
+        {
+            curr[0] = i;
+            for (int j = 1; j <= m; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                curr[j] = Math.Min(Math.Min(curr[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            curr.CopyTo(prev);
+        }
+        return prev[m];
+    }
+
     internal void ApplyRoundEnemies(int round, IEnumerable<string> names)
     {
         lock (_historyGate)
@@ -149,8 +224,15 @@ public sealed partial class HostApi
             var previous = RoundEnemiesFor(round);
             var enemies = previous.Enemies.ToList();
             var catalog = EnemyIdsByName();
-            foreach (var name in names)
+            var match = Match;
+            var roundPool = _placementAdapter.RoundStreams(round, match.Mode?.Id, match.Solo, match.EnemyTypes, match.BossId)
+                .SelectMany(s => s.Spawns).Select(e => e.Profile.Name).Distinct().ToArray();
+            foreach (var raw in names)
             {
+                var name = ResolveRoundEnemyName(round, raw, catalog, roundPool);
+                if (name is null) continue;
+                if (name != raw)
+                    AppLogger.Info("RoundEnemy", $"敌人名纠偏：{raw} -> {name}");
                 if (previous.Removed.Any(e => e.Name == name)) continue;
                 int index = enemies.FindIndex(e => e.Name == name);
                 if (index >= 0) enemies[index] = enemies[index] with { Source = "read" };

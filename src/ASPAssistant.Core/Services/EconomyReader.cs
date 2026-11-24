@@ -73,7 +73,21 @@ public sealed class EconomyReader(IOcrEngine ocr, GameShopTheme theme = GameShop
             var digits = await Read(_roundDigitsX.Value, roundLabel.Box.Y, (int)(52 * scale), roundLabel.Box.H, true);
             roundText = string.Join("", digits.Select(t => t.Text));
         }
-        int? round = Number(roundText);
+        else if (string.IsNullOrWhiteSpace(roundText)
+            && top.FirstOrDefault(t => t.Text.Trim() == "回") is { } shortLabel)
+        {
+            // 部分帧 OCR 会漏掉「合」字只剩「回」，直接取其右侧紧邻的回合数字块。
+            var adjacent = top.Where(t => !ReferenceEquals(t, shortLabel)
+                    && t.Box.X > shortLabel.Box.X
+                    && t.Box.X - (shortLabel.Box.X + shortLabel.Box.W) < 100 * scale
+                    && Math.Abs(t.Box.Y - shortLabel.Box.Y) < 25 * scale)
+                .OrderBy(t => t.Box.X)
+                .FirstOrDefault();
+            if (adjacent is not null) roundText = adjacent.Text;
+        }
+        // 可露希尔斜体数字 7 在小字号下常被 PaddleOCR 误读为 Z；仅对独立回合数字框纠偏。
+        var normalizedRoundText = roundText.Trim().Replace('Z', '7').Replace('z', '7').Replace('O', '0').Replace('o', '0');
+        int? round = Number(normalizedRoundText);
         RoundRawText = string.Join(" | ", top.Select(t => t.Text)) + $"; digits={roundText}";
         if (round is < 1 or > 20) round = null;
         // 动画标牌会让顶部文字漏检；只用本帧就绪控件补证，不沿用上一帧阶段。
@@ -87,8 +101,13 @@ public sealed class EconomyReader(IOcrEngine ocr, GameShopTheme theme = GameShop
         int? money = theme == GameShopTheme.Closure
             ? await ReadClosureMoneyAsync(ocr, bitmap)
             : Number(string.Concat((await Read(moneyBox.X, moneyBox.Y, moneyBox.Width, moneyBox.Height, true)).Select(t => t.Text)));
+        // 可露希尔主题在休整期优先用 2ms 轮廓法直接定位升级卡，避免每帧 OCR 底部 85%（1632x302）全部商店卡片导致 800-1300ms 卡顿。
+        ClosureUpgradeCard? closureCard = theme == GameShopTheme.Closure && isRest ? ClosureUpgradeCard.Locate(bitmap) : null;
+        bool skipWidePanelScan = theme == GameShopTheme.Closure && isRest
+            && (closureCard is not null || !ShopLayout.HasCards(bitmap, uiScale ?? GameUiScale.Shop(bitmap), theme));
+
         // 卡面动画也在底部大框里。已有定位时只核对标签和按钮，等级、价格仍各读本帧。
-        if (_labelBounds.IsEmpty || !_labelPixels.Unchanged(bitmap, _labelBounds))
+        if (!skipWidePanelScan && (_labelBounds.IsEmpty || !_labelPixels.Unchanged(bitmap, _labelBounds)))
         {
             _panelText = await Read(0, (int)(height * .72), (int)(width * .85), (int)(height * .28));
             _levelLabel = _panelText.FirstOrDefault(t => t.Text.Contains("LEVEL", StringComparison.OrdinalIgnoreCase) || t.Text == "LEUEL")
@@ -103,8 +122,8 @@ public sealed class EconomyReader(IOcrEngine ocr, GameShopTheme theme = GameShop
                 _labelPixels.Unchanged(bitmap, _labelBounds);
             }
         }
-        var panel = _panelText;
-        var label = _levelLabel;
+        var panel = skipWidePanelScan ? [] : _panelText;
+        var label = skipWidePanelScan ? null : _levelLabel;
         bool? frozen = null;
         int? refreshCost = null, progress = null, remaining = null;
         if (isRest)
@@ -159,7 +178,7 @@ public sealed class EconomyReader(IOcrEngine ocr, GameShopTheme theme = GameShop
                 (int)(height - 273 * scale), (int)(52 * scale), (int)(38 * scale), true);
             cost = level == 6 ? null : Number(string.Join("", price.Select(t => t.Text)));
         }
-        if (theme == GameShopTheme.Closure && isRest && ClosureUpgradeCard.Locate(bitmap) is { } card)
+        if (closureCard is { } card)
         {
             // 确认升级时卡上预览的是下一级；按钮文字来自同一帧。
             var caption = card.Caption;

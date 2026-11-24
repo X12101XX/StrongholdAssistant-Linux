@@ -122,11 +122,27 @@ public sealed class RoundEnemyReader(IOcrEngine ocr)
         Marshal.Copy(thumbnail.Data, pixels, 0, pixels.Length);
         if (_listPixels is not null && _listPixels.Zip(pixels, (a, b) => Math.Abs(a - b)).Average() < 2)
             return null;
+        using var list2x = new Mat();
+        Cv2.Resize(list, list2x, new CvSize(width * 2, height * 2), 0, 0, InterpolationFlags.Cubic);
+        // 敌人名单为白色抗锯齿细字；先 2x 插值再按最小通道提取中性白字并保留灰度过渡，避免 1x 硬二值化断笔。
+        var channels = Cv2.Split(list2x);
+        using var minBg = new Mat();
+        using var minBgr = new Mat();
+        try
+        {
+            Cv2.Min(channels[0], channels[1], minBg);
+            Cv2.Min(minBg, channels[2], minBgr);
+        }
+        finally
+        {
+            foreach (var ch in channels) ch.Dispose();
+        }
         using var names = new Mat();
-        Cv2.InRange(list, Scalar.All(185), Scalar.All(255), names);
-        var texts = await ocr.RecognizeRegionAsync(names.ImEncode(".png"), 0, 0, width, height);
+        // 135 以下压黑、135..235 线性拉伸到 0..255，保留细笔画灰阶供 PaddleOCR 识别。
+        minBgr.ConvertTo(names, MatType.CV_8UC1, 2.55, -135 * 2.55);
+        var texts = await ocr.RecognizeRegionAsync(names.ImEncode(".bmp"), 0, 0, list2x.Cols, list2x.Rows);
         _listPixels = pixels;
-        return texts.Where(t => t.Box.X < 25 * s && t.Box.H >= 14 * s && t.Box.H <= 40 * s)
+        return texts.Where(t => t.Box.X < 56 * s && t.Box.H >= 24 * s && t.Box.H <= 84 * s)
             .OrderBy(t => t.Box.Y).Select(t => t.Text.Trim()).Where(t => t.Length > 0).Distinct().ToArray();
     }
 }
