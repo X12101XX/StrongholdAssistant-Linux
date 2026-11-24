@@ -54,7 +54,13 @@ public static class ShopLayout
         return Enumerable.Range(0, 6).Any(slot => HasCard(image, k, theme, slot));
     }
 
-    public static bool HasCard(Bitmap image, double k, GameShopTheme theme, int slot)
+    /// <summary>检测商店底栏是否处于展开状态（含全售罄的可露希尔 NO INFO 空槽，供场上镜头判断）。</summary>
+    public static bool HasShopStrip(Bitmap image, double k, GameShopTheme theme)
+    {
+        return Enumerable.Range(0, 6).Any(slot => HasSlotFrame(image, k, theme, slot));
+    }
+
+    public static bool HasSlotFrame(Bitmap image, double k, GameShopTheme theme, int slot)
     {
         double scale = Math.Min(image.Width / 1920.0, image.Height / 1080.0) * k;
         int delta = Math.Max(2, (int)Math.Round(3 * scale));
@@ -73,7 +79,13 @@ public static class ShopLayout
             }
             return hits >= 14;
         }
-        if (!Edge(card.Left) || !Edge(card.Right)) return false;
+        return Edge(card.Left) && Edge(card.Right);
+    }
+
+    public static bool HasCard(Bitmap image, double k, GameShopTheme theme, int slot)
+    {
+        if (!HasSlotFrame(image, k, theme, slot)) return false;
+        var card = Card(slot, image.Width, image.Height, k, theme);
         // 可露希尔售罄空槽（NO INFO）同样带亮蓝边框，但槽内为深蓝暗底；通过内部亮度排除空槽，避免误报商店识别失败。
         if (theme == GameShopTheme.Closure)
         {

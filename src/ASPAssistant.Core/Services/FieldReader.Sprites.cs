@@ -50,12 +50,9 @@ public sealed partial class FieldReader
             && match.Gap >= .02;
     }
 
-    private Dictionary<FieldCell, FieldSpritePatch> ReadSprites(byte[] frame,
+    private Dictionary<FieldCell, FieldSpritePatch> ReadSprites(Mat image,
         IReadOnlyDictionary<FieldCell, int> cells)
     {
-        using var raw = Cv2.ImDecode(frame, ImreadModes.Color);
-        using var image = new Mat();
-        Cv2.Resize(raw, image, new Size(1920, 1080));
         var result = new Dictionary<FieldCell, FieldSpritePatch>();
         foreach (var (cell, tier) in cells)
         {

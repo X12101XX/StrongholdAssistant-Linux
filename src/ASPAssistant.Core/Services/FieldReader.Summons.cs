@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using ASPAssistant.Core.Models;
 using OpenCvSharp;
 
@@ -8,10 +10,13 @@ public sealed partial class FieldReader
     private SummonDefinition[] _summonDefinitions = [];
     private SpriteMatcher? _summonMatcher;
     private SpriteMatcher? _summonOperatorMatcher;
+    private readonly object _summonOperatorGate = new();
     private string _operatorPackage = "";
     private (string Name, int Tier)[] _operatorTiers = [];
     private readonly Dictionary<FieldCell, (double X, double Y)> _summonFeet = [];
     private readonly HashSet<FieldCell> _summonHints = [];
+    // 按 (格子, 阶数, 角标标记, 排除提示) 缓存上一帧裁块指纹，画面未变的空格/老格跳过重复模板比对。
+    private readonly ConcurrentDictionary<(FieldCell Cell, int Tier, bool Badge, bool Excluded), (ulong Hash, FieldSummon? Summon)> _summonCellCache = new();
     public FieldSummon[] Summons { get; private set; } = [];
 
     private static Mat NormalizeSpriteImage(System.Drawing.Bitmap bitmap)
@@ -49,8 +54,10 @@ public sealed partial class FieldReader
     {
         Summons = [];
         if (_summonMatcher is null) return;
-        var found = new List<FieldSummon>();
         var names = _summonDefinitions.Select(s => s.CharId).ToArray();
+        var work = new List<(FieldCell Cell, int Tier, bool Badge, bool Excluded, bool Bench, FieldSpriteGeometry Geometry, Mat Crop, int Left, int Top, ulong Hash)>();
+        var found = new ConcurrentBag<(FieldCell Cell, FieldSummon Summon)>();
+
         foreach (var (cell, tier) in cells.ToArray())
         {
             var g = _cellGeometry[cell];
@@ -69,28 +76,87 @@ public sealed partial class FieldReader
             bool bench = cell.Zone == "bench";
             if (!CoversSprite(image, SpriteBounds(foot.X, foot.Y, bench))) continue;
             g = g with { BadgeFootX = foot.X, BadgeFootY = foot.Y };
-            // 预筛、精排和干员复核共用同一裁块，无需在进程内来回编码 PNG。
-            using var crop = TemplateCrop(image, g, bench, out int left, out int top);
-            var quick = _summonMatcher.MatchAtFoot(crop, bench, g, left, top, 0, names, searchRadius: 8, quick: true);
-            if (quick.Candidates.FirstOrDefault() is not { Score: >= .5 }) continue;
-            var candidates = quick.Candidates.Take(4).Select(c => c.Name).ToArray();
-            var match = _summonMatcher.MatchAtFoot(crop, bench, g, left, top, 0, candidates, searchRadius: 8);
-            var ranked = match.Candidates.GroupBy(c => _summonDefinitions.Single(s => s.CharId == c.Name).Name)
-                .Select(group => (Name: group.Key, Score: group.Max(c => c.Score)))
-                .OrderByDescending(c => c.Score).ToArray();
+            var crop = TemplateCrop(image, g, bench, out int left, out int top);
             bool excluded = _summonHints.Contains(cell);
-            if (ranked.Length == 0 || ranked[0].Score < (excluded ? .64 : badge ? .68 : .80)
-                || ranked.Length > 1 && ranked[0].Score - ranked[1].Score < (excluded ? .06 : badge ? .12 : .16)) continue;
-            if (tier > 0)
+            ulong hash = ComputeCropFingerprint(crop);
+            var cacheKey = (cell, tier, badge, excluded);
+            if (_summonCellCache.TryGetValue(cacheKey, out var cached) && cached.Hash == hash)
             {
-                _summonOperatorMatcher ??= new(_operatorPackage);
-                var operators = _summonOperatorMatcher.MatchAtFoot(crop, bench, g, left, top, tier,
-                    _operatorTiers.Where(o => o.Tier == tier).Select(o => o.Name).ToArray());
-                if (operators.Candidates.FirstOrDefault() is { } best && ranked[0].Score < best.Score + .12) continue;
+                crop.Dispose();
+                if (cached.Summon is not null) found.Add((cell, cached.Summon));
+                continue;
             }
-            cells[cell] = 0;
-            found.Add(new(cell.Zone, cell.Col, cell.Row, ranked[0].Name, null));
+            work.Add((cell, tier, badge, excluded, bench, g, crop, left, top, hash));
         }
-        Summons = found.ToArray();
+
+        if (work.Count > 0)
+        {
+            // 按格并行匹配，内部关闭嵌套并行避免线程池争用，并共享跨线程模板缓存。
+            Parallel.ForEach(work, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(Environment.ProcessorCount, work.Count) }, item =>
+            {
+                try
+                {
+                    FieldSummon? matched = MatchSummonCell(item.Crop, item.Cell, item.Tier, item.Badge, item.Excluded, item.Bench, item.Geometry, item.Left, item.Top, names);
+                    _summonCellCache[(item.Cell, item.Tier, item.Badge, item.Excluded)] = (item.Hash, matched);
+                    if (matched is not null) found.Add((item.Cell, matched));
+                }
+                finally
+                {
+                    item.Crop.Dispose();
+                }
+            });
+        }
+
+        var result = new List<FieldSummon>(found.Count);
+        foreach (var (cell, summon) in found.OrderBy(p => p.Cell.Zone).ThenBy(p => p.Cell.Row).ThenBy(p => p.Cell.Col))
+        {
+            cells[cell] = 0;
+            result.Add(summon);
+        }
+        Summons = result.ToArray();
+    }
+
+    private FieldSummon? MatchSummonCell(Mat crop, FieldCell cell, int tier, bool badge, bool excluded, bool bench,
+        FieldSpriteGeometry g, int left, int top, string[] names)
+    {
+        var quick = _summonMatcher!.MatchAtFoot(crop, bench, g, left, top, 0, names, searchRadius: 8, quick: true, parallel: false);
+        if (quick.Candidates.FirstOrDefault() is not { Score: >= .5 }) return null;
+        var candidates = quick.Candidates.Take(4).Select(c => c.Name).ToArray();
+        var match = _summonMatcher.MatchAtFoot(crop, bench, g, left, top, 0, candidates, searchRadius: 8, parallel: false);
+        var ranked = match.Candidates.GroupBy(c => _summonDefinitions.Single(s => s.CharId == c.Name).Name)
+            .Select(group => (Name: group.Key, Score: group.Max(c => c.Score)))
+            .OrderByDescending(c => c.Score).ToArray();
+        if (ranked.Length == 0 || ranked[0].Score < (excluded ? .64 : badge ? .68 : .80)
+            || ranked.Length > 1 && ranked[0].Score - ranked[1].Score < (excluded ? .06 : badge ? .12 : .16)) return null;
+        if (tier > 0)
+        {
+            SpriteMatcher opMatcher;
+            lock (_summonOperatorGate) opMatcher = _summonOperatorMatcher ??= new(_operatorPackage);
+            var operators = opMatcher.MatchAtFoot(crop, bench, g, left, top, tier,
+                _operatorTiers.Where(o => o.Tier == tier).Select(o => o.Name).ToArray(), parallel: false);
+            if (operators.Candidates.FirstOrDefault() is { } best && ranked[0].Score < best.Score + .12) return null;
+        }
+        return new(cell.Zone, cell.Col, cell.Row, ranked[0].Name, null);
+    }
+
+    private static ulong ComputeCropFingerprint(Mat crop)
+    {
+        ulong h = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        int rows = crop.Rows, cols = crop.Cols;
+        int stride = (int)crop.Step();
+        byte[] rowBuf = new byte[cols * 3];
+        for (int y = 2; y < rows; y += 6)
+        {
+            Marshal.Copy(crop.Data + y * stride, rowBuf, 0, rowBuf.Length);
+            for (int x = 2; x < cols; x += 6)
+            {
+                int i = x * 3;
+                h = (h ^ (byte)(rowBuf[i] >> 3)) * prime;
+                h = (h ^ (byte)(rowBuf[i + 1] >> 3)) * prime;
+                h = (h ^ (byte)(rowBuf[i + 2] >> 3)) * prime;
+            }
+        }
+        return h;
     }
 }

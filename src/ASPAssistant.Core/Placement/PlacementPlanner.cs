@@ -1,5 +1,7 @@
 // 2026-11-15：从 CarlosDJY d3dc2f9 移植计算核心与测试，适配本项目输入和数据，保留原声明。
 // Modified for ASP Assistant Regulation on 2026-11-14; see NOTICE.
+using System.Collections.Concurrent;
+using System.Text;
 using System.Text.RegularExpressions;
 using ASPAssistant.Core.Models;
 
@@ -143,10 +145,15 @@ public sealed class PlacementPlanner
     {
         var job = new Job(this, map, pool, options);
         var best = job.Solve(cancel, start: options.Start is null ? null : job.Normalise(options.Start));
-        if (options.Simulate && best.Count > 0)
+        if (best.Count > 0)
         {
-            job.Calibrate(best);
-            best = job.Solve(cancel, simulate: true, start: best);
+            job.OptimiseFacing(best, cancel, useSimulation: false);
+            if (options.Simulate)
+            {
+                job.Calibrate(best);
+                best = job.Solve(cancel, simulate: true, start: best);
+                job.OptimiseFacing(best, cancel, useSimulation: true);
+            }
         }
         return job.Explain(best);
     }
@@ -899,7 +906,7 @@ public sealed class PlacementPlanner
         private readonly PlacementOptions _options;
         private readonly List<string> _pool;
         private readonly List<string> _unplaceable;
-        private readonly Dictionary<string, CovenantContext> _covCache = [];
+        private readonly ConcurrentDictionary<string, CovenantContext> _covCache = new(StringComparer.Ordinal);
         private readonly Dictionary<string, PlacementCandidate> _candidates;
         private readonly Dictionary<string, CombatEffect> _equipment;
 
@@ -1122,6 +1129,7 @@ public sealed class PlacementPlanner
                 double Rate(double f)
                 {
                     var res = SimulateStreams(reference, StreamRuns(f));
+                    if (Math.Abs(f - 1) < 1e-9) _spawnedReal = Expected(res, r => r.Spawned);
                     return Expected(res, r => r.Handled) / Math.Max(1e-9, Expected(res, r => r.Worth));
                 }
                 double atReal = Rate(1);
@@ -1444,18 +1452,13 @@ public sealed class PlacementPlanner
             var (killed, events) = ExpectedFight(pl);
             // A carry made the first blocker of a lane loses part of that lane (the fight alone may not show it when
             // the lane is light this round, but it is the line the enemies hit first).
-            _spawnedReal ??= Expected(SimulateStreams(pl, _realRuns), r => r.Spawned);
-            double squishy = SquishyLoss(pl, _spawnedReal.Value);
-            _events = events;
-            try
-            {
-                var bd = Evaluate(pl, null);
-                // Damage dealt breaks ties between placements that handle as many: facing the enemies, covering
-                // their path (a tenth of a kill per enemy's worth of HP).
-                return KillPoint * (killed - squishy + DamageWeight * events.DamageInEnemies)
-                    + CombatPrior * bd.Combat + bd.Activation + _options.StackWeight * bd.Stack;
-            }
-            finally { _events = null; }
+            double spawnedReal = _spawnedReal ??= Expected(SimulateStreams(pl, _realRuns), r => r.Spawned);
+            double squishy = SquishyLoss(pl, spawnedReal);
+            var bd = Evaluate(pl, null, events);
+            // Damage dealt breaks ties between placements that handle as many: facing the enemies, covering
+            // their path (a tenth of a kill per enemy's worth of HP).
+            return KillPoint * (killed - squishy + DamageWeight * events.DamageInEnemies)
+                + CombatPrior * bd.Combat + bd.Activation + _options.StackWeight * bd.Stack;
         }
 
         private int FieldCount => Math.Min(Math.Max(1, _options.FieldCount), _pool.Count);
@@ -1564,8 +1567,9 @@ public sealed class PlacementPlanner
         }
 
         private Breakdown Evaluate(Dictionary<string, (BoardCell Cell, Facing Facing)> boardPl,
-            Dictionary<string, List<string>>? notes)
+            Dictionary<string, List<string>>? notes, SimEvents? events = null)
         {
+            events ??= _events;
             void Note(string n, string text) { if (notes is not null) notes[n].Add(text); }
             var cov = Covenants(boardPl.Keys);
             // boardPl / atBoard: the board at the end of the preparation phase (stacking, positional traits).
@@ -1827,7 +1831,7 @@ public sealed class PlacementPlanner
                 {
                     // Self and the operator behind; with a fight simulated, one trigger per stun in the eight cells around.
                     double per = I.SelfBack;
-                    if (_events is { } ev && I.Trait.Contains("眩晕"))
+                    if (events is { } ev && I.Trait.Contains("眩晕"))
                     {
                         double stuns = ev.Stuns.GetValueOrDefault(n);
                         per = Math.Min(I.Cap > 0 ? I.Cap : double.MaxValue, Math.Max(1, I.StackAmount) * stuns);
@@ -1870,7 +1874,7 @@ public sealed class PlacementPlanner
                 if (nm == "华法琳" && front is not null)
                 {
                     // Casts as the simulated fight had them when there is one (a skill that never ends: once).
-                    double k = Math.Min(7, _events is { } fe ? fe.Casts.GetValueOrDefault(front) : info[front].SkillCasts);
+                    double k = Math.Min(7, events is { } fe ? fe.Casts.GetValueOrDefault(front) : info[front].SkillCasts);
                     stk += k * cov.Lv(Act(front));
                     Note(n, $"身前 {front} 开技能叠层（约 {k:0.#} 次/回合）");
                 }
@@ -1911,7 +1915,7 @@ public sealed class PlacementPlanner
                     else if (rowCount >= 3) { stk += 12; Note(n, $"同一行 {rowCount} 人，触发"); }
                     else Note(n, $"同一行只有 {rowCount} 人，未触发");
                 }
-                if (I.KillRange && _events is { } kev)
+                if (I.KillRange && events is { } kev)
                 {
                     double kills = kev.Kills.GetValueOrDefault(n);
                     double layers = Math.Min(I.Cap > 0 ? I.Cap : double.MaxValue, Math.Max(1, I.StackAmount) * kills);
@@ -1940,7 +1944,7 @@ public sealed class PlacementPlanner
                 if (I.KillRange || I.SelfFront > 0 || I.SelfBack > 0 || I.Name == "罗比菈塔" || I.StackKind is not ("covenant" or "self")) continue;
                 double perRound = I.StackPerRound;
                 // Stacking on casting a skill: as many casts as the simulated fight had (capped as the trait says).
-                if (_events is { } ev && I.Trait.Contains("开启技能时") && I.StackAmount > 0)
+                if (events is { } ev && I.Trait.Contains("开启技能时") && I.StackAmount > 0)
                 {
                     double c = ev.Casts.GetValueOrDefault(n);
                     perRound = Math.Min(I.Cap > 0 ? I.Cap : double.MaxValue, I.StackAmount * c);
@@ -2155,10 +2159,12 @@ public sealed class PlacementPlanner
 
         // ── Search ─────────────────────────────────────────────────────────
 
-        // 固定人员和格子，逐人比较四个朝向；只做一轮局部改进。
-        public void OptimiseFacing(Dictionary<string, (BoardCell Cell, Facing Facing)> pl, CancellationToken cancel)
+        // 固定人员和格子，逐人比较其余三个朝向；跳过当前朝向避免重复模拟。
+        public void OptimiseFacing(Dictionary<string, (BoardCell Cell, Facing Facing)> pl, CancellationToken cancel,
+            bool? useSimulation = null)
         {
-            Func<Dictionary<string, (BoardCell Cell, Facing Facing)>, double> score = _options.Simulate ? SimScore : Score;
+            bool sim = useSimulation ?? _options.Simulate;
+            Func<Dictionary<string, (BoardCell Cell, Facing Facing)>, double> score = sim ? SimScore : Score;
             double bestScore = score(pl);
             foreach (var key in pl.Keys.ToArray())
             {
@@ -2166,6 +2172,7 @@ public sealed class PlacementPlanner
                 var best = pl[key];
                 foreach (var facing in Faces)
                 {
+                    if (facing == best.Facing) continue;
                     pl[key] = (best.Cell, facing);
                     double value = score(pl);
                     if (value > bestScore) { best = pl[key]; bestScore = value; }
@@ -2174,27 +2181,58 @@ public sealed class PlacementPlanner
             }
         }
 
+        private static string PlacementKey(Dictionary<string, (BoardCell Cell, Facing Facing)> pl)
+        {
+            var keys = pl.Keys.ToArray();
+            Array.Sort(keys, StringComparer.Ordinal);
+            var sb = new StringBuilder(keys.Length * 16);
+            foreach (var k in keys)
+            {
+                var (cell, facing) = pl[k];
+                sb.Append(k).Append(':').Append(cell.Col).Append(',').Append(cell.Row).Append(',').Append((int)facing).Append(';');
+            }
+            return sb.ToString();
+        }
+
+        private static readonly int SimChains = Environment.ProcessorCount >= 4 ? 2 : 1;
+
         public Dictionary<string, (BoardCell Cell, Facing Facing)> Solve(CancellationToken cancel, bool simulate = false,
             Dictionary<string, (BoardCell Cell, Facing Facing)>? start = null)
         {
-            Func<Dictionary<string, (BoardCell Cell, Facing Facing)>, double> Score = simulate ? SimScore : this.Score;
-            var rnd = new Random(_options.Seed);
             var pins = _options.Pins.Where(kv => Info.ContainsKey(kv.Key) && !Board.Bombarded(kv.Value.Cell) && !_options.OccupiedCells.Contains(kv.Value.Cell))
                 .ToDictionary(kv => kv.Key, kv => kv.Value);
             // Kept on the field by the player (anywhere): placed first and never swapped out; kept on the bench: never placed.
             var must = _options.FieldPins.Where(k => Info.ContainsKey(k) && !pins.ContainsKey(k)).ToHashSet();
             var free = _pool.Where(n => !pins.ContainsKey(n) && (!_options.BenchPins.Contains(n) || must.Contains(n))).ToList();
             int field = Math.Max(FieldCount, Math.Min(pins.Count + must.Count, _pool.Count));
-            Dictionary<string, (BoardCell, Facing)>? best = null;
-            double bestScore = double.MinValue;
             if (_pool.Count == 0) return [];
 
-            // With the simulation each step plays a whole fight: one run from the fast plan, at a lower temperature.
-            int restarts = start is not null ? 1 : Math.Max(1, _options.Restarts);
+            // 阶段一（启发式）并行多起点搜索：第 0 组从当前站位出发，其余组随机初始化以跳出局部最优。
+            // 阶段二（战斗模拟）多核下运行双链并行退火，共享局面记忆化表，兼顾更快耗时与更优解。
+            int restarts = simulate ? SimChains : Math.Max(4, _options.Restarts);
             double heat = simulate ? 3.0 : 8.0;
-            for (int restart = 0; restart < restarts; restart++)
+            int totalIters = simulate ? Math.Max(50, _options.SimulationIterations) : Math.Max(100, _options.Iterations);
+            int iters = simulate && restarts > 1 ? Math.Max(50, (totalIters + restarts - 1) / restarts) : totalIters;
+            var simMemo = simulate ? new ConcurrentDictionary<string, double>(StringComparer.Ordinal) : null;
+
+            (Dictionary<string, (BoardCell Cell, Facing Facing)> Best, double Score) RunRestart(int restart)
             {
-                var pl = start is not null ? start.Where(p => !Board.Bombarded(p.Value.Cell) && !_options.OccupiedCells.Contains(p.Value.Cell)).ToDictionary(p => p.Key, p => p.Value)
+                var rnd = new Random(_options.Seed + restart * 997);
+                double Eval(Dictionary<string, (BoardCell Cell, Facing Facing)> cand)
+                {
+                    if (!simulate) return this.Score(cand);
+                    string key = PlacementKey(cand);
+                    if (simMemo!.TryGetValue(key, out double cached)) return cached;
+                    double val = SimScore(cand);
+                    simMemo.TryAdd(key, val);
+                    return val;
+                }
+
+                // 阶段二双链均从阶段一最优布局出发（链 1 稍微提高初温探索邻近盆地）；阶段一链 0 从当前站位出发、其余随机初始化。
+                var seedStart = (simulate || restart == 0) ? start : null;
+                double chainHeat = simulate && restart > 0 ? heat * 1.45 : heat;
+                var pl = seedStart is not null
+                    ? seedStart.Where(p => !Board.Bombarded(p.Value.Cell) && !_options.OccupiedCells.Contains(p.Value.Cell)).ToDictionary(p => p.Key, p => p.Value)
                     : new Dictionary<string, (BoardCell Cell, Facing Facing)>();
                 foreach (var (n, p) in pins) pl[n] = (p.Cell, p.Facing);
                 var used = pl.Values.Select(v => v.Cell).ToHashSet();
@@ -2209,20 +2247,24 @@ public sealed class PlacementPlanner
                     pl[n] = (c, Faces[rnd.Next(4)]);
                     used.Add(c);
                 }
-                double cur = Score(pl);
-                if (cur > bestScore) { bestScore = cur; best = new(pl); }
-                int iters = simulate ? Math.Max(50, _options.SimulationIterations) : Math.Max(100, _options.Iterations);
+                double cur = Eval(pl);
+                var bestPl = new Dictionary<string, (BoardCell Cell, Facing Facing)>(pl);
+                double bestSc = cur;
+                int stale = 0;
+
                 for (int it = 0; it < iters; it++)
                 {
                     if ((it & (simulate ? 15 : 255)) == 0) cancel.ThrowIfCancellationRequested();
-                    double T = Math.Max(0.05, heat * (1 - (double)it / iters));
+                    double T = Math.Max(0.05, chainHeat * (1 - (double)it / iters));
+                    // 模拟退火尾段长期无改进时提前结束，把算力留给终局全员朝向精修。
+                    if (simulate && stale >= 180 && T < 0.85) break;
                     var movable = pl.Keys.Where(k => !pins.ContainsKey(k)).ToList();
                     if (movable.Count == 0) break;
                     var cand = new Dictionary<string, (BoardCell Cell, Facing Facing)>(pl);
                     string n = movable[rnd.Next(movable.Count)];
                     double mv = rnd.NextDouble();
                     var bench = free.Where(m => !cand.ContainsKey(m)).ToList();
-                    if (mv < 0.2 && bench.Count > 0)
+                    if (mv < 0.20 && bench.Count > 0)
                     {
                         if (must.Contains(n)) continue;
                         string m = bench[rnd.Next(bench.Count)];
@@ -2237,26 +2279,59 @@ public sealed class PlacementPlanner
                         }
                         cand[m] = (cell, f);
                     }
-                    else if (mv < 0.5)
+                    else if (mv < 0.50)
                     {
+                        var curCell = cand[n].Cell;
                         var occ = cand.Where(kv => kv.Key != n).Select(kv => kv.Value.Cell).ToHashSet();
-                        var opts = Board.Deployable.Where(c => !occ.Contains(c) && Board.Legal(Info[n], c)).ToList();
+                        var opts = Board.Deployable.Where(c => c != curCell && !occ.Contains(c) && Board.Legal(Info[n], c)).ToList();
                         if (opts.Count == 0) continue;
-                        cand[n] = (opts[rnd.Next(opts.Count)], cand[n].Facing);
+                        var nextCell = opts[rnd.Next(opts.Count)];
+                        var nextFacing = cand[n].Facing;
+                        // 模拟阶段挪格时顺带用轻量启发式挑最佳朝向，减少挪到好格却面壁被拒的情况。
+                        if (simulate && mv < 0.35)
+                        {
+                            double bestHeuristic = double.MinValue;
+                            foreach (var f in Faces)
+                            {
+                                cand[n] = (nextCell, f);
+                                double hs = this.Score(cand);
+                                if (hs > bestHeuristic) { bestHeuristic = hs; nextFacing = f; }
+                            }
+                        }
+                        cand[n] = (nextCell, nextFacing);
                     }
-                    else if (mv < 0.75) cand[n] = (cand[n].Cell, Faces[rnd.Next(4)]);
+                    else if (mv < 0.75)
+                    {
+                        int curFaceIdx = Array.IndexOf(Faces, cand[n].Facing);
+                        cand[n] = (cand[n].Cell, Faces[(curFaceIdx + 1 + rnd.Next(3)) & 3]);
+                    }
                     else
                     {
                         string m = movable[rnd.Next(movable.Count)];
                         if (m == n || !Board.Legal(Info[n], cand[m].Cell) || !Board.Legal(Info[m], cand[n].Cell)) continue;
                         (cand[n], cand[m]) = ((cand[m].Cell, cand[n].Facing), (cand[n].Cell, cand[m].Facing));
                     }
-                    double sc = Score(cand);
+                    double sc = Eval(cand);
                     if (sc >= cur || rnd.NextDouble() < Math.Exp((sc - cur) / T)) { pl = cand; cur = sc; }
-                    if (cur > bestScore) { bestScore = cur; best = new(pl); }
+                    if (cur > bestSc + 1e-6)
+                    {
+                        bestSc = cur;
+                        bestPl = new Dictionary<string, (BoardCell Cell, Facing Facing)>(pl);
+                        stale = 0;
+                    }
+                    else stale++;
                 }
+                return (bestPl, bestSc);
             }
-            return best!.ToDictionary(kv => kv.Key, kv => kv.Value);
+
+            if (restarts == 1) return RunRestart(0).Best;
+            var results = new (Dictionary<string, (BoardCell Cell, Facing Facing)> Best, double Score)[restarts];
+            Parallel.For(0, restarts, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(restarts, Environment.ProcessorCount), CancellationToken = cancel },
+                r => results[r] = RunRestart(r));
+            var winner = results[0];
+            for (int r = 1; r < restarts; r++)
+                if (results[r].Score > winner.Score) winner = results[r];
+            return winner.Best;
         }
 
         // ── Result ─────────────────────────────────────────────────────────

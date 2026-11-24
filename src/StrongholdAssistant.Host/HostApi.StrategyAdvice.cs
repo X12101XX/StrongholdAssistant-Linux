@@ -45,7 +45,7 @@ public sealed partial class HostApi
     private async Task ComputeStrategyAdviceAsync(OpeningInput input)
     {
         // 连续补录只计算最后一个快照。模型可能在计算时换局，发布前再次核对。
-        await Task.Delay(120).ConfigureAwait(false);
+        await Task.Delay(60).ConfigureAwait(false);
         lock (_adviceGate)
             if (!ReferenceEquals(input, _adviceInput)) return;
         var state = new MatchState { GameDataVersion = TextFact(_gameDataVersion), ModeId = TextFact(input.Mode),
@@ -78,10 +78,7 @@ public sealed partial class HostApi
     {
         var mode = state.ModeId.Value;
         var basis = StrategyBasis(mode) ?? "";
-        if (mode?.StartsWith("mode_multi_", StringComparison.Ordinal) == true)
-            return new("unavailable", "多人模式的推荐还在训练，暂不提供", basis, [], new(0, 0), []);
-
-        var candidates = _openingStrategies.Where(s => !s.InactiveModes.Contains(mode!)).Select(s => s.Id).ToArray();
+        var candidates = _openingStrategies.Where(s => mode is null || !s.InactiveModes.Contains(mode)).Select(s => s.Id).ToArray();
         var recommendation = RecommendOpeningStrategies(state, candidates);
         if (recommendation.Candidates.Length == 0)
             return new("unavailable", recommendation.Assumptions[0], basis, [], new(0, 0), []);

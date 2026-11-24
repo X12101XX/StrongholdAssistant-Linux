@@ -153,11 +153,12 @@ public sealed partial class FieldTracker
         foreach (var (cell, rawPatch) in ordered)
         {
             int index = Array.FindIndex(ordered, p => p.Key == cell);
-            if (force && index == rowEnd)
+            if (index == rowEnd)
             {
                 rowEnd = index + 1;
                 while (rowEnd < ordered.Length && ordered[rowEnd].Key.Zone == cell.Zone && ordered[rowEnd].Key.Row == cell.Row) rowEnd++;
-                PrepareRow(o, ordered[index..rowEnd], personalScores);
+                if (force || rowEnd - index >= 2)
+                    PrepareRow(o, ordered[index..rowEnd], personalScores, force, before);
             }
             if (!_units.TryGetValue(cell, out var unit)) continue;
             var patch = _occlusion?.Invoke(rawPatch, _units.Values.Where(u => u.Cell != cell && o.Sprites.ContainsKey(u.Cell))
@@ -346,7 +347,7 @@ public sealed partial class FieldTracker
 
     // 同排只并行纯比对；邻人和个人图块若被前格更新，顺序应用时按实际输入重算。
     private void PrepareRow(FieldObservation o, KeyValuePair<FieldCell, FieldSpritePatch>[] row,
-        Dictionary<(byte[], byte[]), double> personalScores)
+        Dictionary<(byte[], byte[]), double> personalScores, bool force, Dictionary<FieldCell, FieldUnit> before)
     {
         _preparedRanks.Clear();
         var inputs = new List<(FieldSpritePatch Patch, int Tier, string[] Names, string[] Sources, Dictionary<string, double> Personal)>();
@@ -355,14 +356,25 @@ public sealed partial class FieldTracker
             var (cell, raw) = row[i];
             if (!_units.TryGetValue(cell, out var unit)
                 || unit.Status == "sure" && unit.Source is "drag" or "manual") continue;
+            if (!force)
+            {
+                if (_moved.Contains(cell)) continue;
+                before.TryGetValue(cell, out var old);
+                bool arrival = old is null;
+                bool direct = unit.Operator is not null && unit.Source == "drag"
+                    && (old?.Operator != unit.Operator || old.Source != unit.Source || arrival);
+                if (direct) continue;
+                if (_returned.Contains(cell) && old is not null && unit.Operator == old.Operator && unit.Source == old.Source) continue;
+            }
             var patch = _occlusion?.Invoke(raw, _units.Values.Where(u => u.Cell != cell && o.Sprites!.ContainsKey(u.Cell))
                 .Select(u => (u, o.Sprites![u.Cell]))) ?? raw;
             var names = MatchCandidates().Distinct().Where(n => HasTier(n, unit.Tier)).ToArray();
             var sources = CurrentName(unit);
             if (names.Length == 0 && sources.Length == 0) continue;
-            var personal = PersonalRanking(patch, unit.Tier, true, names, sources, personalScores);
+            var personal = PersonalRanking(patch, unit.Tier, force, names, sources, personalScores);
             inputs.Add((patch, unit.Tier, names, sources, personal));
         }
+        if (inputs.Count < 2 && !force) return;
         var results = new PreparedRank[inputs.Count];
         Parallel.For(0, inputs.Count, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, i =>
         {

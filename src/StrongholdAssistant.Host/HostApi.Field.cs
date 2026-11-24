@@ -7,6 +7,11 @@ public sealed partial class HostApi
 {
     private readonly object _fieldGate = new();
     private readonly SemaphoreSlim _fieldScanGate = new(1, 1);
+    private sealed record AutoFieldRequest(byte[] Frame, DateTimeOffset At, EconomyReading? Economy,
+        bool MainScreen, bool ShopVisible, IReadOnlyList<ShopItem> Shop);
+    private readonly object _autoFieldQueueGate = new();
+    private AutoFieldRequest? _pendingAutoField;
+    private bool _autoFieldDraining;
     public Func<Task<FieldState>>? ReadCurrentField { get; set; }
 
     public async Task<FieldState> RecognizeFieldAsync()
@@ -127,9 +132,63 @@ public sealed partial class HostApi
         bool requested;
         lock (_fieldGate) requested = _fieldReader != null && _nextField != null && economy is { IsRest: true } && mainScreen;
         if (!Settings.FieldAuto && !Settings.Collect && !requested) return;
-        if (!await _fieldScanGate.WaitAsync(0)) return;
-        try { await ReadFieldCoreAsync(frame, at, economy, mainScreen, shopVisible, shop, false, requested); }
-        finally { _fieldScanGate.Release(); }
+        // 采集模式或显式等待首份结果时保持同步等待；常规后台自动认人投递到最新帧单槽队列，
+        // 避免阻塞商店/资金主扫描循环，同时让场上识别连续紧贴最新休整帧运行。
+        if (Settings.Collect || requested)
+        {
+            if (!await _fieldScanGate.WaitAsync(0)) return;
+            try { await ReadFieldCoreAsync(frame, at, economy, mainScreen, shopVisible, shop, false, requested); }
+            finally { _fieldScanGate.Release(); }
+            return;
+        }
+        bool startWorker = false;
+        lock (_autoFieldQueueGate)
+        {
+            _pendingAutoField = new(frame, at, economy, mainScreen, shopVisible, shop.ToArray());
+            if (!_autoFieldDraining)
+            {
+                _autoFieldDraining = true;
+                startWorker = true;
+            }
+        }
+        if (startWorker) _ = Task.Run(DrainAutoFieldAsync);
+    }
+
+    private async Task DrainAutoFieldAsync()
+    {
+        try
+        {
+            while (true)
+            {
+                AutoFieldRequest? next;
+                lock (_autoFieldQueueGate)
+                {
+                    next = _pendingAutoField;
+                    _pendingAutoField = null;
+                    if (next is null)
+                    {
+                        _autoFieldDraining = false;
+                        return;
+                    }
+                }
+                if (!Settings.FieldAuto) continue;
+                await _fieldScanGate.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (!Settings.FieldAuto) continue;
+                    await ReadFieldCoreAsync(next.Frame, next.At, next.Economy, next.MainScreen, next.ShopVisible, next.Shop, false, false).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    ASPAssistant.Core.AppLogger.Warn("Field", $"后台自动识别跳过一帧：{ex.Message}");
+                }
+                finally { _fieldScanGate.Release(); }
+            }
+        }
+        catch
+        {
+            lock (_autoFieldQueueGate) _autoFieldDraining = false;
+        }
     }
 
     public async Task<FieldState> RecognizeFieldFrameAsync(byte[] frame, DateTimeOffset at, EconomyReading? economy,
@@ -137,6 +196,7 @@ public sealed partial class HostApi
     {
         if (economy is not { IsRest: true } || !mainScreen)
             throw new RecognitionException("现在不在休整期的棋盘画面，先关掉干员详情等面板、回到棋盘再点");
+        lock (_autoFieldQueueGate) _pendingAutoField = null;
         using (FieldRecognitionTiming.Measure("fieldWait")) await _fieldScanGate.WaitAsync();
         try
         {
@@ -241,6 +301,7 @@ public sealed partial class HostApi
 
     private void ResetField()
     {
+        lock (_autoFieldQueueGate) _pendingAutoField = null;
         InvalidateCollectionFrame();
         _fieldRestRound = null;
         ResetPlacement();

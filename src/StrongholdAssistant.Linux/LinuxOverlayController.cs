@@ -38,6 +38,10 @@ internal sealed class LinuxOverlayController : IDisposable
     private int? _upgradeLevel;
     private string? _lastSentFrame;
     private readonly StringBuilder _frameBuilder = new(2048);
+    private readonly Timer _routeCycleTimer;
+    private int _routeCycleIndex;
+    private int _routeCycleCount;
+    private string? _lastRouteKey;
 
     public bool IsVisible => _visible;
     public event Action? PlacementChanged;
@@ -45,6 +49,23 @@ internal sealed class LinuxOverlayController : IDisposable
     public LinuxOverlayController(bool enabled = true)
     {
         _enabled = enabled;
+        _routeCycleTimer = new Timer(_ => OnRouteCycleTick(), null, Timeout.Infinite, Timeout.Infinite);
+    }
+
+    private void OnRouteCycleTick()
+    {
+        lock (_gate)
+        {
+            if (!_enabled || _hiddenForCapture || _routesHiddenByKey || !_routeSettings.Enabled
+                || _boardRoutes is null || _routeCycleCount <= 1
+                || !string.Equals(_routeSettings.Overlap, "cycle", StringComparison.OrdinalIgnoreCase))
+            {
+                _routeCycleTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                return;
+            }
+            _routeCycleIndex = (_routeCycleIndex + 1) % _routeCycleCount;
+            RedrawLocked();
+        }
     }
 
     private bool EnsureProcessLocked()
@@ -164,6 +185,8 @@ internal sealed class LinuxOverlayController : IDisposable
         {
             _visible = false;
             _lastSentFrame = null;
+            _routeCycleCount = 0;
+            _routeCycleTimer.Change(Timeout.Infinite, Timeout.Infinite);
             SendLineLocked("HIDE");
         }
     }
@@ -182,6 +205,12 @@ internal sealed class LinuxOverlayController : IDisposable
     {
         lock (_gate)
         {
+            string? key = routes is null ? null : $"{routes.MapId}|{routes.Round}|{routes.BossId}";
+            if (key != _lastRouteKey || settings != _routeSettings)
+            {
+                _lastRouteKey = key;
+                _routeCycleIndex = 0;
+            }
             _boardRoutes = routes;
             _routeSettings = settings;
             RedrawLocked();
@@ -192,7 +221,9 @@ internal sealed class LinuxOverlayController : IDisposable
     {
         lock (_gate)
         {
+            if (_routeSettings == settings) return;
             _routeSettings = settings;
+            _routeCycleIndex = 0;
             RedrawLocked();
         }
     }
@@ -251,6 +282,11 @@ internal sealed class LinuxOverlayController : IDisposable
         if (!_enabled) return;
         if (_hiddenForCapture || _geom is null || !_geom.OnActiveWorkspace || _geom.LocalWidth <= 0 || _geom.LocalHeight <= 0)
         {
+            if (_routeCycleCount > 0)
+            {
+                _routeCycleCount = 0;
+                _routeCycleTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            }
             if (_visible)
             {
                 _visible = false;
@@ -266,7 +302,31 @@ internal sealed class LinuxOverlayController : IDisposable
 
         // 1. Enemy routes (bottom layer)
         if (_boardRoutes is not null && !_routesHiddenByKey && _routeSettings.Enabled)
-            EmitRoutes(cmds, _boardRoutes, w, h);
+        {
+            var shown = FilterRoutes(_boardRoutes, _routeSettings);
+            bool cycling = string.Equals(_routeSettings.Overlap, "cycle", StringComparison.OrdinalIgnoreCase) && shown.Count > 1;
+            int prevCount = _routeCycleCount;
+            _routeCycleCount = cycling ? shown.Count : 0;
+            if (cycling)
+            {
+                _routeCycleIndex %= shown.Count;
+                if (prevCount <= 1)
+                {
+                    int ms = Math.Clamp((int)Math.Round(_routeSettings.CycleSeconds * 1000), 800, 10000);
+                    _routeCycleTimer.Change(ms, ms);
+                }
+            }
+            else if (prevCount > 1)
+            {
+                _routeCycleTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            }
+            EmitRoutes(cmds, _boardRoutes, shown, cycling ? _routeCycleIndex : -1, w, h);
+        }
+        else if (_routeCycleCount > 0)
+        {
+            _routeCycleCount = 0;
+            _routeCycleTimer.Change(Timeout.Infinite, Timeout.Infinite);
+        }
 
         // 2. Placement recommendations
         if (_layerSettings.Placement && _placementPlan is not null && _field is not null && _fieldGeometry?.Projection is { } proj)
@@ -497,56 +557,81 @@ internal sealed class LinuxOverlayController : IDisposable
         cmds.Add($"TEXT {F(bx + bw * 0.5)} {F(by - 14 * k)} {F(15 * k)} 1 0.953 0.702 0.133 1 0.063 0.071 0.082 0.86 {F(10 * k)} {F(4 * k)} 1 升本 → {level} 级");
     }
 
-    private static void EmitRoutes(List<string> cmds, BoardRoutes routes, double w, double h)
+    private static List<EnemyRoute> FilterRoutes(BoardRoutes routes, RouteOverlaySettings settings)
+    {
+        var mainFly = routes.Routes.Where(r => r.Motion == "fly" && !r.Boss).MaxBy(r => r.Count);
+        var sideSetting = settings.Side == "auto" ? routes.PlayerSide : settings.Side;
+        return routes.Routes
+            .Where(r => r.Boss || r.Motion != "fly" || settings.Fly == "all" || (settings.Fly == "main" && ReferenceEquals(r, mainFly)))
+            .Where(r => r.Side is null || sideSetting is null || r.Side == sideSetting)
+            .ToList();
+    }
+
+    private static void EmitRoutes(List<string> cmds, BoardRoutes routes, List<EnemyRoute> shown, int activeIndex, double w, double h)
     {
         double k = h / 1080.0;
-        foreach (var route in routes.Routes)
+        // 降低整体透明度，既减少遮挡干员与阶数角标，也降低截屏回读干扰；循环模式下先画淡化背景线，再画当前高亮线。
+        for (int pass = 0; pass < 2; pass++)
         {
-            bool isFly = string.Equals(route.Motion, "fly", StringComparison.OrdinalIgnoreCase);
-            bool isBoss = route.Boss;
-            var (cr, cg, cb) = isBoss
-                ? (0.953, 0.702, 0.133)
-                : isFly ? (0.780, 0.608, 1.000)
-                : (1.000, 0.353, 0.306);
-            double shiftX = isFly ? 0.2 : isBoss ? -0.17 : 0;
-            double shiftY = isFly ? -0.26 : isBoss ? 0.2 : 0;
-
-            foreach (var segment in route.Segments)
+            for (int ri = 0; ri < shown.Count; ri++)
             {
-                if (segment.Count < 2) continue;
-                int n = Math.Min(segment.Count, 64);
-                var sbPts = new StringBuilder();
-                var pts = new (double X, double Y)[n];
-                for (int i = 0; i < n; i++)
-                {
-                    var pt = segment[i];
-                    var proj = routes.Projection.Project(pt.Col + 0.5 + shiftX, pt.Row + 0.5 + shiftY);
-                    double px = proj.X * w, py = proj.Y * h;
-                    pts[i] = (px, py);
-                    if (i > 0) sbPts.Append(' ');
-                    sbPts.Append(F(px)).Append(' ').Append(F(py));
-                }
-                // Dark outline + bright core
-                cmds.Add($"POLY {n} {sbPts} 0.08 0.04 0.04 0.78 {F(6.5 * k)} 0 0 0 0 0 0");
-                cmds.Add($"POLY {n} {sbPts} {F(cr)} {F(cg)} {F(cb)} 0.85 {F(3.2 * k)} {(isFly ? 1 : 0)} 0 0 0 0 0");
-                cmds.Add($"CIRCLE {F(pts[0].X)} {F(pts[0].Y)} {F(5.5 * k)} 0.08 0.04 0.04 0.9 {F(2 * k)} {F(cr)} {F(cg)} {F(cb)} 0.95");
+                bool isActive = activeIndex < 0 || ri == activeIndex;
+                if ((pass == 0 && isActive) || (pass == 1 && !isActive)) continue;
 
-                // Directional arrowhead at segment end (and midpoint for longer routes)
-                int[] arrowEnds = n >= 4 ? [n / 2, n - 1] : [n - 1];
-                foreach (int idx in arrowEnds)
+                var route = shown[ri];
+                bool isFly = string.Equals(route.Motion, "fly", StringComparison.OrdinalIgnoreCase);
+                bool isBoss = route.Boss;
+                var (cr, cg, cb) = isBoss
+                    ? (0.953, 0.702, 0.133)
+                    : isFly ? (0.780, 0.608, 1.000)
+                    : (1.000, 0.353, 0.306);
+                double shiftX = isFly ? 0.2 : isBoss ? -0.17 : 0;
+                double shiftY = isFly ? -0.26 : isBoss ? 0.2 : 0;
+
+                double outlineAlpha = isActive ? (activeIndex >= 0 ? 0.26 : 0.22) : 0.07;
+                double coreAlpha = isActive ? (activeIndex >= 0 ? 0.46 : 0.38) : 0.14;
+                double outlineW = (isFly ? 3.4 : isBoss ? 4.8 : 4.2) * k;
+                double coreW = (isFly ? 1.7 : isBoss ? 2.6 : 2.1) * k;
+
+                foreach (var segment in route.Segments)
                 {
-                    double dx = pts[idx].X - pts[idx - 1].X;
-                    double dy = pts[idx].Y - pts[idx - 1].Y;
-                    double len = Math.Sqrt(dx * dx + dy * dy);
-                    if (len < 6 * k) continue;
-                    double ux = dx / len, uy = dy / len;
-                    double tipX = pts[idx].X, tipY = pts[idx].Y;
-                    double headL = 12 * k, headW = 6.5 * k;
-                    double lx = tipX - ux * headL - uy * headW;
-                    double ly = tipY - uy * headL + ux * headW;
-                    double rx = tipX - ux * headL + uy * headW;
-                    double ry = tipY - uy * headL - ux * headW;
-                    cmds.Add($"POLY 3 {F(tipX)} {F(tipY)} {F(lx)} {F(ly)} {F(rx)} {F(ry)} 0.08 0.04 0.04 0.9 {F(1.5 * k)} 0 {F(cr)} {F(cg)} {F(cb)} 0.95 1");
+                    if (segment.Count < 2) continue;
+                    int n = Math.Min(segment.Count, 64);
+                    var sbPts = new StringBuilder();
+                    var pts = new (double X, double Y)[n];
+                    for (int i = 0; i < n; i++)
+                    {
+                        var pt = segment[i];
+                        var proj = routes.Projection.Project(pt.Col + 0.5 + shiftX, pt.Row + 0.5 + shiftY);
+                        double px = proj.X * w, py = proj.Y * h;
+                        pts[i] = (px, py);
+                        if (i > 0) sbPts.Append(' ');
+                        sbPts.Append(F(px)).Append(' ').Append(F(py));
+                    }
+                    // Translucent dark under-stroke + soft colored core
+                    cmds.Add($"POLY {n} {sbPts} 0.08 0.04 0.04 {F(outlineAlpha)} {F(outlineW)} 0 0 0 0 0 0");
+                    cmds.Add($"POLY {n} {sbPts} {F(cr)} {F(cg)} {F(cb)} {F(coreAlpha)} {F(coreW)} {(isFly ? 1 : 0)} 0 0 0 0 0");
+                    if (!isActive) continue;
+
+                    cmds.Add($"CIRCLE {F(pts[0].X)} {F(pts[0].Y)} {F(4.2 * k)} 0.08 0.04 0.04 {F(outlineAlpha + 0.06)} {F(1.4 * k)} {F(cr)} {F(cg)} {F(cb)} {F(coreAlpha + 0.06)}");
+
+                    // Directional arrowhead at segment end (and midpoint for longer routes)
+                    int[] arrowEnds = n >= 4 ? [n / 2, n - 1] : [n - 1];
+                    foreach (int idx in arrowEnds)
+                    {
+                        double dx = pts[idx].X - pts[idx - 1].X;
+                        double dy = pts[idx].Y - pts[idx - 1].Y;
+                        double len = Math.Sqrt(dx * dx + dy * dy);
+                        if (len < 6 * k) continue;
+                        double ux = dx / len, uy = dy / len;
+                        double tipX = pts[idx].X, tipY = pts[idx].Y;
+                        double headL = 10 * k, headW = 5.2 * k;
+                        double lx = tipX - ux * headL - uy * headW;
+                        double ly = tipY - uy * headL + ux * headW;
+                        double rx = tipX - ux * headL + uy * headW;
+                        double ry = tipY - uy * headL - ux * headW;
+                        cmds.Add($"POLY 3 {F(tipX)} {F(tipY)} {F(lx)} {F(ly)} {F(rx)} {F(ry)} 0.08 0.04 0.04 {F(outlineAlpha + 0.08)} {F(1.2 * k)} 0 {F(cr)} {F(cg)} {F(cb)} {F(coreAlpha + 0.10)} 1");
+                    }
                 }
             }
         }
@@ -556,6 +641,7 @@ internal sealed class LinuxOverlayController : IDisposable
     {
         lock (_gate)
         {
+            _routeCycleTimer.Dispose();
             try
             {
                 _stdin?.WriteLine("QUIT");

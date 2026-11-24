@@ -50,13 +50,13 @@ public class OcrScannerService : IDisposable
     private bool _visibleRest;
     public void SetShopScanSpeed(string speed)
     {
-        _configuredInterval = speed == "fast" ? 250 : 800;
+        _configuredInterval = speed == "fast" ? 150 : 600;
         UpdateScanInterval(_visibleRest);
     }
     private void UpdateScanInterval(bool visibleRest)
     {
         _visibleRest = visibleRest;
-        double interval = visibleRest ? Math.Min(_configuredInterval, 400) : _configuredInterval;
+        double interval = visibleRest ? Math.Min(_configuredInterval, 250) : _configuredInterval;
         if (_scanTimer.Interval != interval) _scanTimer.Interval = interval;
     }
     private void SetIdleInterval(double interval)
@@ -247,7 +247,7 @@ public class OcrScannerService : IDisposable
         using var stream = new MemoryStream(frame);
         using var bitmap = new System.Drawing.Bitmap(stream);
         double uiScale = GameUiScale.Shop(bitmap);
-        bool visible = ShopLayout.HasCards(bitmap, uiScale, _shopReader.Theme);
+        bool visible = ShopLayout.HasShopStrip(bitmap, uiScale, _shopReader.Theme);
         var cards = visible ? Enumerable.Range(0, 6).Select(slot =>
         {
             var r = ShopLayout.Card(slot, width, height, uiScale, _shopReader.Theme);

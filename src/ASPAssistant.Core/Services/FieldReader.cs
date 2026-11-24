@@ -87,7 +87,7 @@ public sealed partial class FieldReader : IDisposable
         _summonMatcher?.Dispose();
         _summonOperatorMatcher?.Dispose();
     }
-    public void Reset() { _boards.Clear(); _round = null; _lastMap = null; KnownMap = null; _shopCards.Clear(); Summons = []; }
+    public void Reset() { _boards.Clear(); _round = null; _lastMap = null; KnownMap = null; _shopCards.Clear(); Summons = []; _summonCellCache.Clear(); }
 
     // 就绪控件可能露在外部窗口旁；棋盘中大面积连续的中性纯色不是地形纹理。
     internal static (bool Obscured, bool Detail, bool ConfirmationCandidate) InspectSurface(byte[] frame)
@@ -135,7 +135,7 @@ public sealed partial class FieldReader : IDisposable
         OverlayGeometry = null;
         _frameGeometry = null;
         if (economy is not { IsRest: true }) return new(at, false, null, economy?.Round, new Dictionary<FieldCell, int>());
-        if (_round != economy.Round) { _boards.Clear(); _round = economy.Round; }
+        if (_round != economy.Round) { _boards.Clear(); _summonCellCache.Clear(); _round = economy.Round; }
         using var stream = new MemoryStream(frame);
         using var bitmap = new Bitmap(stream);
         double scale = Math.Min(bitmap.Width / 1920d, bitmap.Height / 1080d);
@@ -173,7 +173,7 @@ public sealed partial class FieldReader : IDisposable
         using var normalizedBitmap = boardStream is null ? null : new Bitmap(boardStream);
         var boardBitmap = normalizedBitmap ?? bitmap;
         var key = (bitmap.Width, bitmap.Height, shopVisible);
-        if (_frameKey != key) { _boards.Clear(); _frameKey = key; }
+        if (_frameKey != key) { _boards.Clear(); _summonCellCache.Clear(); _frameKey = key; }
         KnownMap = _lastMap ?? KnownMap;
         _boards.TryGetValue(key, out var board);
         BoardMatch? cameraOnly = null;
@@ -200,7 +200,8 @@ public sealed partial class FieldReader : IDisposable
         if (viewport.Width != 1 || viewport.Height != 1)
             hidden = hidden.Select(r => new RectangleF((r.X - viewport.X) / viewport.Width,
                 (r.Y - viewport.Y) / viewport.Height, r.Width / viewport.Width, r.Height / viewport.Height)).ToList();
-        var cells = ReadCells(boardBitmap, board, shopVisible, hidden, cameraOnly);
+        using var spriteImage = NormalizeSpriteImage(boardBitmap);
+        var cells = ReadCells(boardBitmap, board, shopVisible, hidden, cameraOnly, spriteImage);
         if ((viewport.Width != 1 || viewport.Height != 1) && OverlayGeometry is { } overlay)
             OverlayGeometry = RestoreBoardViewport(overlay, viewport);
         Dictionary<int, string>? cards = null;
@@ -215,7 +216,7 @@ public sealed partial class FieldReader : IDisposable
         else if (readShop) _shopCards.Clear();
         return new(at, true, _lastMap, economy.Round, cells,
             cards, economy.Money) { PanelOperator = drag, Equipment = equipment,
-                Sprites = ReadSprites(boardFrame, cells), Geometry = _frameGeometry, Summons = Summons };
+                Sprites = ReadSprites(spriteImage, cells), Geometry = _frameGeometry, Summons = Summons };
     }
 
     private static bool HasDetailPanel(Bitmap bitmap, double scale)
@@ -278,10 +279,10 @@ public sealed partial class FieldReader : IDisposable
     }
 
     public Dictionary<FieldCell, int> ReadCells(Bitmap bitmap, BoardMatch? board, bool shopVisible,
-        IReadOnlyList<RectangleF>? hidden = null) => ReadCells(bitmap, board, shopVisible, hidden, null);
+        IReadOnlyList<RectangleF>? hidden = null) => ReadCells(bitmap, board, shopVisible, hidden, null, null);
 
     private Dictionary<FieldCell, int> ReadCells(Bitmap bitmap, BoardMatch? board, bool shopVisible,
-        IReadOnlyList<RectangleF>? hidden, BoardMatch? cameraOnly)
+        IReadOnlyList<RectangleF>? hidden, BoardMatch? cameraOnly, OpenCvSharp.Mat? existingSpriteImage = null)
     {
         var px = new Pixels(bitmap);
         _spriteFeet.Clear();
@@ -342,9 +343,9 @@ public sealed partial class FieldReader : IDisposable
         }
         using var resized = bitmap.Width == 1920 && bitmap.Height == 1080 ? null : new Bitmap(bitmap, 1920, 1080);
         var cameraFrame = resized ?? bitmap;
-        var landmarks = ReadBadges(cameraFrame);
-        double badgeScale = BadgeScale(cameraFrame, landmarks, zoom);
         var bodyPixels = resized is null ? px : new Pixels(cameraFrame);
+        var landmarks = ReadBadges(bodyPixels, cameraFrame.Width, cameraFrame.Height);
+        double badgeScale = BadgeScale(cameraFrame, landmarks, zoom);
         var topVisible = anchors.Where(a => a.Key.Zone == "board" && a.Key.Row == 0 && a.Value.Y >= 150 * height / 1080)
             .Select(a => a.Key).ToHashSet();
         foreach (var (cell, p) in anchors)
@@ -383,7 +384,8 @@ public sealed partial class FieldReader : IDisposable
             if (p.X < 20 || p.X > width - 55 || (p.Y < minY * height / 1080 && !topVisible.Contains(cell)) || p.Y + 55 > height * (shopVisible ? .72 : .94)) continue;
             cells[cell] = 0;
         }
-        using var spriteImage = NormalizeSpriteImage(bitmap);
+        using var ownedSpriteImage = existingSpriteImage is null ? NormalizeSpriteImage(bitmap) : null;
+        var spriteImage = existingSpriteImage ?? ownedSpriteImage!;
         var matchedBadges = new Dictionary<FieldCell, FieldBadge>();
         foreach (var cell in cells.Keys.ToArray())
         {
@@ -427,6 +429,9 @@ public sealed partial class FieldReader : IDisposable
         // 展开商店时第一排角标与盟约栏重叠，只比较角标下半部。
         bool lower = board && cy < 180 * scale;
         FieldBadge? best = null;
+        Span<double> values = stackalloc double[(10 - (lower ? 5 : 0)) * 10];
+        Span<double> fine = stackalloc double[(20 - (lower ? 10 : 0)) * 20];
+        Span<double> rim = stackalloc double[100];
         foreach (int size in new[] { 34, 40, 44 })
         {
             var templates = _templates.Where(t => t.Size == size && (supportedTier is null || t.Tier == supportedTier)).ToArray();
@@ -448,12 +453,18 @@ public sealed partial class FieldReader : IDisposable
                         int inner = Math.Max(outer + 1, (int)Math.Round(7 * scale));
                         if (px.Gray(x + outer, y + mid) < px.Gray(x + inner, y + mid) + 6
                             && px.Gray(x + actualSize - outer - 1, y + mid) < px.Gray(x + actualSize - inner - 1, y + mid) + 6) continue;
-                        var values = Sample(px, x, y, actualSize, 10, lower ? 5 : 0); Normalize(values);
-                        if (templates.Max(t => Dot(lower ? t.Lower : t.Values, values)) < (supportedTier is null ? .60 : .40)) continue;
+                        Sample(px, x, y, actualSize, values, 10, lower ? 5 : 0); Normalize(values);
+                        double coarseMax = double.NegativeInfinity;
+                        foreach (var t in templates)
+                        {
+                            double d = Dot(lower ? t.Lower : t.Values, values);
+                            if (d > coarseMax) coarseMax = d;
+                        }
+                        if (coarseMax < (supportedTier is null ? .60 : .40)) continue;
                         for (int yy = y; yy <= Math.Min(y + 1, height - actualSize - 1); yy++)
                             for (int xx = x; xx <= Math.Min(x + 1, width - actualSize - 1); xx++)
                             {
-                                var fine = Sample(px, xx, yy, actualSize, 20, lower ? 10 : 0); Normalize(fine);
+                                Sample(px, xx, yy, actualSize, fine, 20, lower ? 10 : 0); Normalize(fine);
                                 foreach (var t in templates)
                                 {
                                     double score = Dot(lower ? t.LowerFine : t.Fine, fine);
@@ -463,7 +474,7 @@ public sealed partial class FieldReader : IDisposable
                                         // 盟约文字可能盖住数字；只在身体模型支持该阶且下框仍清晰时采纳。
                                         if (score < minimum) continue;
                                         // 下半图为 10×20，最后五行保留底边与两个下角。
-                                        var rim = fine[100..]; Normalize(rim);
+                                        fine[100..].CopyTo(rim); Normalize(rim);
                                         if (Dot(t.Rim, rim) < .72) continue;
                                     }
                                     else if (score < .73)
@@ -567,21 +578,28 @@ public sealed partial class FieldReader : IDisposable
     }
     // 兼容无棋盘投影的离线截图诊断；产品 ReadCells/ReadAsync 仅按格读取。
     public IReadOnlyList<FieldBadge> ReadBadges(Bitmap bitmap)
+        => ReadBadges(new Pixels(bitmap), bitmap.Width, bitmap.Height);
+
+    private IReadOnlyList<FieldBadge> ReadBadges(Pixels px, int width, int height)
     {
-        var px = new Pixels(bitmap);
         var found = new List<FieldBadge>();
+        Span<double> values = stackalloc double[100];
+        Span<double> fine = stackalloc double[400];
         foreach (int size in new[] { 34, 40, 44 })
         {
             var templates = _templates.Where(t => t.Size == size).ToArray();
             int step = size == 40 ? 2 : 3;
-            for (int y = 70; y < bitmap.Height * .82 - size; y += step)
-                for (int x = bitmap.Width / 10; x < bitmap.Width * .90 - size; x += step)
+            int yMax = (int)(height * .82 - size);
+            int xMin = width / 10;
+            int xMax = (int)(width * .90 - size);
+            int mid = size / 2;
+            for (int y = 70; y < yMax; y += step)
+                for (int x = xMin; x < xMax; x += step)
                 {
                     // 角标外框比内部底色亮，先用左右两边排除绝大多数地板像素。
-                    int mid = size / 2;
                     if (px.Gray(x + 2, y + mid) < px.Gray(x + 7, y + mid) + 18
                         || px.Gray(x + size - 3, y + mid) < px.Gray(x + size - 8, y + mid) + 18) continue;
-                    var values = Sample(px, x, y, size);
+                    Sample(px, x, y, size, values);
                     Normalize(values);
                     double coarse = -1;
                     foreach (var t in templates) coarse = Math.Max(coarse, Dot(t.Values, values));
@@ -589,7 +607,7 @@ public sealed partial class FieldReader : IDisposable
                     for (int yy = y - 1; yy <= y + 1; yy++)
                         for (int xx = x - 1; xx <= x + 1; xx++)
                         {
-                            var fine = Sample(px, xx, yy, size, 20); Normalize(fine);
+                            Sample(px, xx, yy, size, fine, 20); Normalize(fine);
                             double score = -1; int tier = 0;
                             foreach (var t in templates)
                             {
@@ -606,8 +624,8 @@ public sealed partial class FieldReader : IDisposable
             if (result.Any(p => Math.Abs(p.X - b.X) < 25 && Math.Abs(p.Y - b.Y) < 25)) continue;
             // 装备悬浮在格子底部，角标右下方的大段空间仍是地板；干员在此处有头部/身体边缘。
             int edges = 0;
-            for (int y = (int)b.Y + 55; y < Math.Min(bitmap.Height - 2, b.Y + 75); y += 2)
-                for (int x = (int)b.X + 18; x < Math.Min(bitmap.Width - 2, b.X + 65); x += 2)
+            for (int y = (int)b.Y + 55; y < Math.Min(height - 2, b.Y + 75); y += 2)
+                for (int x = (int)b.X + 18; x < Math.Min(width - 2, b.X + 65); x += 2)
                     if (Math.Abs(px.Gray(x, y) - px.Gray(x + 2, y)) > 32) edges++;
             if (edges >= 22) result.Add(b);
         }
@@ -617,38 +635,62 @@ public sealed partial class FieldReader : IDisposable
     private static double[] Sample(Pixels p, int x, int y, int size, int count = 10, int firstRow = 0)
     {
         var values = new double[(count - firstRow) * count];
-        for (int r = firstRow; r < count; r++) for (int c = 0; c < count; c++)
-            values[(r - firstRow) * count + c] = p.Gray(x + (int)((c + .5) * size / count), y + (int)((r + .5) * size / count));
+        Sample(p, x, y, size, values, count, firstRow);
         return values;
     }
-    private static void Normalize(double[] a)
+    private static void Sample(Pixels p, int x, int y, int size, Span<double> values, int count = 10, int firstRow = 0)
+    {
+        double step = (double)size / count;
+        int idx = 0;
+        for (int r = firstRow; r < count; r++)
+        {
+            int sy = y + (int)((r + .5) * step);
+            for (int c = 0; c < count; c++)
+                values[idx++] = p.Gray(x + (int)((c + .5) * step), sy);
+        }
+    }
+    private static void Normalize(Span<double> a)
     {
         double mean = 0, sum = 0;
         for (int i = 0; i < a.Length; i++) mean += a[i];
         mean /= a.Length;
-        for (int i = 0; i < a.Length; i++) { a[i] -= mean; sum += a[i] * a[i]; }
+        for (int i = 0; i < a.Length; i++) { double v = a[i] - mean; a[i] = v; sum += v * v; }
         double norm = Math.Sqrt(sum);
-        if (norm > 0) for (int i = 0; i < a.Length; i++) a[i] /= norm;
+        if (norm > 0) { double inv = 1.0 / norm; for (int i = 0; i < a.Length; i++) a[i] *= inv; }
     }
-    private static double Dot(double[] a, double[] b)
+    private static double Dot(ReadOnlySpan<double> a, ReadOnlySpan<double> b)
     { double s = 0; for (int i = 0; i < a.Length; i++) s += a[i] * b[i]; return s; }
 
     private sealed class Pixels
     {
         private readonly byte[] _bytes;
         private readonly int _stride;
+        private readonly int _bpp;
         public Pixels(Bitmap source)
         {
+#if LINUX_PORT
+            // Linux 下直接锁原图 32bpp BGRA，避免额外分配整帧 24bpp 位图与 DrawImage 拷贝。
+            var data = source.LockBits(new(0, 0, source.Width, source.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                _stride = data.Stride;
+                _bpp = 4;
+                _bytes = new byte[_stride * source.Height];
+                Marshal.Copy(data.Scan0, _bytes, 0, _bytes.Length);
+            }
+            finally { source.UnlockBits(data); }
+#else
             using var bitmap = new Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb);
             using (var g = Graphics.FromImage(bitmap)) g.DrawImage(source, new Rectangle(0, 0, source.Width, source.Height), new Rectangle(0, 0, source.Width, source.Height), GraphicsUnit.Pixel);
             var data = bitmap.LockBits(new(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
-            _stride = data.Stride; _bytes = new byte[_stride * bitmap.Height];
+            _stride = data.Stride; _bpp = 3; _bytes = new byte[_stride * bitmap.Height];
             Marshal.Copy(data.Scan0, _bytes, 0, _bytes.Length); bitmap.UnlockBits(data);
+#endif
         }
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         public int Gray(int x, int y)
-        { int i = y * _stride + x * 3; return (_bytes[i] * 29 + _bytes[i + 1] * 150 + _bytes[i + 2] * 77) >> 8; }
+        { int i = y * _stride + x * _bpp; return (_bytes[i] * 29 + _bytes[i + 1] * 150 + _bytes[i + 2] * 77) >> 8; }
         public bool IsBlue(int x, int y)
-        { int i = y * _stride + x * 3; return _bytes[i] > 90 && _bytes[i] > _bytes[i + 2] * 1.4 && _bytes[i + 1] > _bytes[i + 2] * 1.2; }
+        { int i = y * _stride + x * _bpp; return _bytes[i] > 90 && _bytes[i] > _bytes[i + 2] * 1.4 && _bytes[i + 1] > _bytes[i + 2] * 1.2; }
     }
 }

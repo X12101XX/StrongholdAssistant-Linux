@@ -20,7 +20,12 @@ public sealed class ShopReader(IOcrEngine engine, IReadOnlyList<string> catalogN
     private int _emptyReadings;
     private byte[]? _lastNameInput;
     private IReadOnlyList<OcrTextResult> _lastNameTexts = [];
-    internal void InvalidateNames() => _lastNameInput = null;
+    private readonly (ulong Hash, int Price)?[] _priceCache = new (ulong, int)?[6];
+    internal void InvalidateNames()
+    {
+        _lastNameInput = null;
+        Array.Clear(_priceCache);
+    }
     public bool ReadPrices { get; set; }
     public int[] EmptySlots { get; private set; } = [];
     internal bool NeedsEmptyConfirmation => _emptyReadings == 1;
@@ -273,16 +278,57 @@ public sealed class ShopReader(IOcrEngine engine, IReadOnlyList<string> catalogN
                     var region = Rectangle.Intersect(new(0, 0, source.Width, source.Height),
                         new(center - (int)(45 * priceScale), source.Height - (int)(313 * screenScale),
                             (int)(150 * priceScale), (int)(92 * screenScale)));
-                    card.Price = await ShopBadge.ReadAsync(engine, source, region, money: false) ?? 0;
+                    ulong hash = RegionFingerprint(source, region);
+                    if ((uint)card.SlotIndex < 6 && _priceCache[card.SlotIndex] is { } cached && cached.Hash == hash)
+                    {
+                        card.Price = cached.Price;
+                        continue;
+                    }
+                    int readPrice = await ShopBadge.ReadAsync(engine, source, region, money: false) ?? 0;
+                    card.Price = readPrice;
+                    if ((uint)card.SlotIndex < 6) _priceCache[card.SlotIndex] = (hash, readPrice);
                     continue;
                 }
-                var price = await engine.RecognizeLineAsync(screenshot, center - (int)(13 * priceScale),
-                    (int)(source.Height - 273 * priceScale), (int)(26 * priceScale), (int)(38 * priceScale));
+                var stdRegion = Rectangle.Intersect(new(0, 0, source.Width, source.Height),
+                    new(center - (int)(13 * priceScale), (int)(source.Height - 273 * priceScale),
+                        (int)(26 * priceScale), (int)(38 * priceScale)));
+                ulong stdHash = RegionFingerprint(source, stdRegion);
+                if ((uint)card.SlotIndex < 6 && _priceCache[card.SlotIndex] is { } stdCached && stdCached.Hash == stdHash)
+                {
+                    card.Price = stdCached.Price;
+                    continue;
+                }
+                var price = await engine.RecognizeLineAsync(screenshot, stdRegion.X, stdRegion.Y, stdRegion.Width, stdRegion.Height);
                 if (int.TryParse(string.Concat(price.Select(t => t.Text)), out int amount) && amount is > 0 and < 100)
+                {
                     card.Price = amount;
+                    if ((uint)card.SlotIndex < 6) _priceCache[card.SlotIndex] = (stdHash, amount);
+                }
             }
         }
         return AllItems.Where(i => trackedNames.Contains(i.Name)).ToArray();
+    }
+
+    private static ulong RegionFingerprint(Bitmap image, Rectangle region)
+    {
+        if (region.Width <= 0 || region.Height <= 0) return 0;
+        ulong h = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        int cols = 12, rows = 8;
+        for (int r = 0; r < rows; r++)
+        {
+            int y = Math.Clamp(region.Top + (r * 2 + 1) * region.Height / (rows * 2), 0, image.Height - 1);
+            for (int c = 0; c < cols; c++)
+            {
+                int x = Math.Clamp(region.Left + (c * 2 + 1) * region.Width / (cols * 2), 0, image.Width - 1);
+                var p = image.GetPixel(x, y);
+                // 量化低 3 位，抗轻微抗锯齿或动效抖动
+                h = (h ^ (byte)(p.R >> 3)) * prime;
+                h = (h ^ (byte)(p.G >> 3)) * prime;
+                h = (h ^ (byte)(p.B >> 3)) * prime;
+            }
+        }
+        return h;
     }
 
     private static string OcrSummary(IReadOnlyList<OcrTextResult> texts)

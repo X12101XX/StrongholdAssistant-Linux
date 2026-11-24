@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Text;
 using System.Runtime.InteropServices;
@@ -17,18 +18,25 @@ public sealed record SpriteMatch(IReadOnlyList<SpriteCandidate> Candidates, doub
 public sealed partial class SpriteMatcher : IDisposable
 {
     public const double AutoFillGap = 0.04592923876191826;
-    private sealed record Template(string Name, string SkinId, int Tier, int Size, Mat Color, Mat Mask, Point2d? Origin, int Variant = 0)
+    private sealed record Template(string Name, string SkinId, int Tier, int Size, Mat Color, Mat Mask, Point2d? Origin, int Variant = 0, bool IsQuick = false)
     {
         public Size Dimensions { get; } = Color.Size();
-        public SearchTemplate? Search { get; set; }
+        private SearchTemplate? _search;
+        public SearchTemplate GetOrCreateSearch()
+        {
+            var existing = Volatile.Read(ref _search);
+            if (existing is not null) return existing;
+            var created = new SearchTemplate(Color, Mask);
+            return Interlocked.CompareExchange(ref _search, created, null) ?? created;
+        }
     }
     private readonly double _resolution;
     private readonly bool _hasOrigins;
     private readonly double _pixelsPerUnit;
     public bool UsesPhysicalScale => _pixelsPerUnit > 0;
     private readonly List<Template> _source = [];
-    // 比对线程独立持有缩放图，避免其他格换尺度时释放正在使用的 Mat。
-    private readonly ThreadLocal<Dictionary<string, (double? Unit, List<Template> Items)>> _scaledByThread = new(() => new(StringComparer.Ordinal), true);
+    // 按 (名称, 量化尺度) 跨线程共享只读缩放模板与 AVX2 SearchTemplate，使用 Lazy 避免冷启动并发重复缩放。
+    private readonly ConcurrentDictionary<(string Name, int Bucket), Lazy<List<Template>>> _scaledCache = new();
     private readonly Dictionary<string, Template[]> _byName;
 
     public SpriteMatcher(string packagePath)
@@ -84,24 +92,24 @@ public sealed partial class SpriteMatcher : IDisposable
 
     internal SpriteMatch MatchAtFoot(Mat crop, bool bench, FieldSpriteGeometry g, int offsetX, int offsetY,
         int tier, IReadOnlyCollection<string> candidates, IReadOnlyDictionary<string, string?>? skins = null,
-        Mat? blocked = null, int searchRadius = 3, bool quick = false)
+        Mat? blocked = null, int searchRadius = 3, bool quick = false, bool parallel = true)
     {
         double dx = g.CellWidth * (bench ? .05017159418908035 : .061382994597481755);
         double dy = g.CellWidth * (bench ? .03892515182781064 : .1774000064377288);
         var anchor = new Point((int)Math.Round(90 + g.BadgeFootX + dx - Math.Round(g.BadgeFootX)) + offsetX,
             (int)Math.Round((bench ? 180 : 156) + g.BadgeFootY + dy - Math.Round(g.BadgeFootY)) + offsetY);
-        return MatchCropCore(crop, bench, tier, candidates, anchor, skins, g.CellWidth * .00271, blocked, searchRadius, quick);
+        return MatchCropCore(crop, bench, tier, candidates, anchor, skins, g.CellWidth * .00271, blocked, searchRadius, quick, parallel);
     }
 
     /// <summary>离线裁块入口。默认180×204；自定义锚点为相对裁块的脚点（旧包为外框底部）。</summary>
     public SpriteMatch MatchCrop(Mat crop, bool bench, int tier, IReadOnlyCollection<string> candidates,
         Point? searchAnchor = null, IReadOnlyDictionary<string, string?>? skins = null,
         double? screenPixelsPerUnit = null, Mat? occlusion = null, int searchRadius = 3)
-        => MatchCropCore(crop, bench, tier, candidates, searchAnchor, skins, screenPixelsPerUnit, occlusion, searchRadius, false);
+        => MatchCropCore(crop, bench, tier, candidates, searchAnchor, skins, screenPixelsPerUnit, occlusion, searchRadius, false, true);
 
     private SpriteMatch MatchCropCore(Mat crop, bool bench, int tier, IReadOnlyCollection<string> candidates,
         Point? searchAnchor, IReadOnlyDictionary<string, string?>? skins,
-        double? screenPixelsPerUnit, Mat? occlusion, int searchRadius, bool quick)
+        double? screenPixelsPerUnit, Mat? occlusion, int searchRadius, bool quick, bool parallel)
     {
         using var timing = FieldRecognitionTiming.Measure("templates");
         if (crop.Empty() || crop.Type() != MatType.CV_8UC3)
@@ -123,27 +131,21 @@ public sealed partial class SpriteMatcher : IDisposable
             using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(radius * 4 + 1, radius * 4 + 1));
             Cv2.Dilate(blocked, blocked, kernel);
         }
-        // 缩放缓存仍由扫描线程构建；各候选只读模板，并行时独占临时 Mat。
+        // 各候选共享跨线程只读缩放模板；每线程独占临时 Mat。
         var work = candidates.Distinct(StringComparer.Ordinal).Select(name => (Name: name,
             Templates: Templates(AppearanceName(name, skins), screenPixelsPerUnit), Skin: skins?.GetValueOrDefault(name))).ToArray();
         var search = UsesPhysicalScale && Avx2.IsSupported ? new SearchImage(half) : null;
         var ranked = new SpriteCandidate?[work.Length];
-        Parallel.For(0, work.Length, new ParallelOptions { MaxDegreeOfParallelism = 4 }, index =>
+
+        void EvaluateCandidate(int index, Mat scores, Mat difference, Mat winnerMask, float[] values)
         {
             var (name, templates, skin) = work[index];
-            using var scores = new Mat(); using var difference = new Mat();
-            var values = new float[(radius * 2 + 1) * (radius * 2 + 1)];
             double best = -2, tiedScore = -2;
             Template? winner = null;
             Rect winnerRegion = default;
-            using var winnerMask = new Mat();
-            // 召唤物预筛每套皮肤仅取首尾外观和标定尺度；干员路径保持原样。
-            var limits = quick ? templates.GroupBy(t => t.SkinId).ToDictionary(g => g.Key,
-                g => (First: g.Min(t => t.Variant), Last: g.Max(t => t.Variant))) : null;
             foreach (var template in templates)
             {
-                if (limits is not null && (template.Size != 100 || template.Variant != limits[template.SkinId].First
-                    && template.Variant != limits[template.SkinId].Last)) continue;
+                if (quick && !template.IsQuick) continue;
                 if (!AllowsSkin(template.SkinId, skin)) continue;
                 if (template.Tier != tier || (!UsesPhysicalScale && (bench ? template.Size == 104 : template.Size == 168))) continue;
                 var a = template.Color; var mask = template.Mask;
@@ -171,7 +173,7 @@ public sealed partial class SpriteMatcher : IDisposable
                     value = ReferenceScore(roi, a, mask);
                 else
                 {
-                    var shape = template.Search ??= new SearchTemplate(a, template.Mask);
+                    var shape = template.GetOrCreateSearch();
                     if (!blocked.Empty() && visibleCount != shape.Count) shape = new SearchTemplate(a, mask);
                     var (location, corr) = shape.Best(search, x0, y0, roi.Width - w + 1, roi.Height - h + 1);
                     value = ScoreAt(roi, a, mask, location, corr);
@@ -218,7 +220,26 @@ public sealed partial class SpriteMatcher : IDisposable
                 var mean = Cv2.Mean(difference, mask);
                 return .75 * corr + .25 * (1 - (mean.Val0 + mean.Val1 + mean.Val2) / (3 * 255));
             }
-        });
+        }
+
+        if (parallel && work.Length > 1)
+        {
+            Parallel.For(0, work.Length, new ParallelOptions { MaxDegreeOfParallelism = 4 },
+                () => (Scores: new Mat(), Difference: new Mat(), WinnerMask: new Mat(), Values: new float[(radius * 2 + 1) * (radius * 2 + 1)]),
+                (index, _, local) =>
+                {
+                    EvaluateCandidate(index, local.Scores, local.Difference, local.WinnerMask, local.Values);
+                    return local;
+                },
+                local => { local.Scores.Dispose(); local.Difference.Dispose(); local.WinnerMask.Dispose(); });
+        }
+        else
+        {
+            using var scores = new Mat(); using var difference = new Mat(); using var winnerMask = new Mat();
+            var values = new float[(radius * 2 + 1) * (radius * 2 + 1)];
+            for (int index = 0; index < work.Length; index++)
+                EvaluateCandidate(index, scores, difference, winnerMask, values);
+        }
         var sorted = ranked.OfType<SpriteCandidate>().OrderByDescending(r => r.Score).ThenBy(r => r.Name, StringComparer.Ordinal).ToArray();
         return new(sorted, sorted.Length > 1 ? sorted[0].Score - sorted[1].Score : null);
     }
@@ -264,15 +285,32 @@ public sealed partial class SpriteMatcher : IDisposable
 
     private List<Template> Templates(string name, double? screenPixelsPerUnit = null)
     {
+        int bucket = UsesPhysicalScale && screenPixelsPerUnit is { } u ? (int)Math.Round(u * 2000) : -1;
+        var key = (name, bucket);
+        return _scaledCache.GetOrAdd(key, k => new Lazy<List<Template>>(() => BuildScaledTemplates(k.Name, k.Bucket),
+            LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+    }
+
+    private List<Template> BuildScaledTemplates(string name, int bucket)
+    {
         using var timing = FieldRecognitionTiming.Measure("templateScale");
-        var cache = _scaledByThread.Value!;
-        if (cache.TryGetValue(name, out var cached) && cached.Unit == screenPixelsPerUnit) return cached.Items;
-        // 格宽的亚像素变化仅在目标整数宽高改变时才会改变缩放图和原点。
-        var result = cached.Items ?? [];
-        int index = 0;
+        double unit = bucket >= 0 ? bucket / 2000.0 : 0;
+        var sources = _byName.GetValueOrDefault(name) ?? [];
+        var skinLimits = new Dictionary<string, (int First, int Last)>(StringComparer.Ordinal);
+        foreach (var s in sources)
+        {
+            if (skinLimits.TryGetValue(s.SkinId, out var lim))
+                skinLimits[s.SkinId] = (Math.Min(lim.First, s.Variant), Math.Max(lim.Last, s.Variant));
+            else
+                skinLimits[s.SkinId] = (s.Variant, s.Variant);
+        }
+        var result = new List<Template>(sources.Length * 2 * (UsesPhysicalScale ? PhysicalSizes.Length : LegacySizes.Length));
         using var mirrored = new Mat();
         using var mirroredMask = new Mat();
-        foreach (var source in _byName.GetValueOrDefault(name) ?? [])
+        foreach (var source in sources)
+        {
+            var lim = skinLimits[source.SkinId];
+            bool quickVariant = source.Variant == lim.First || source.Variant == lim.Last;
             for (int flip = 0; flip <= 1; flip++)
             {
                 bool mirroredReady = false;
@@ -280,11 +318,9 @@ public sealed partial class SpriteMatcher : IDisposable
                 foreach (int size in UsesPhysicalScale ? PhysicalSizes : LegacySizes)
                 {
                     double scale = UsesPhysicalScale
-                        ? screenPixelsPerUnit!.Value * _resolution / _pixelsPerUnit * size / 100
+                        ? unit * _resolution / _pixelsPerUnit * size / 100
                         : size * _resolution / Math.Max(w, h);
                     var target = new Size((int)Math.Round(w * scale), (int)Math.Round(h * scale));
-                    int slot = index++;
-                    if (slot < result.Count && result[slot].Dimensions == target) continue;
                     if (flip == 1 && !mirroredReady)
                     {
                         Cv2.Flip(source.Color, mirrored, FlipMode.Y);
@@ -296,23 +332,17 @@ public sealed partial class SpriteMatcher : IDisposable
                     Cv2.Resize(flip == 1 ? mirroredMask : source.Mask, b, target, interpolation: InterpolationFlags.Nearest);
                     Point2d? origin = source.Origin is { } p
                         ? new((flip == 1 ? w - p.X : p.X) * target.Width / w, p.Y * target.Height / h) : null;
-                    var scaled = new Template(name, source.SkinId, source.Tier, size, a, b, origin, source.Variant);
-                    if (slot == result.Count) result.Add(scaled);
-                    else
-                    {
-                        result[slot].Color.Dispose(); result[slot].Mask.Dispose();
-                        result[slot] = scaled;
-                    }
+                    result.Add(new Template(name, source.SkinId, source.Tier, size, a, b, origin, source.Variant, size == 100 && quickVariant));
                 }
             }
-        cache[name] = (screenPixelsPerUnit, result);
+        }
         return result;
     }
 
     public void Dispose()
     {
-        foreach (var t in _source.Concat(_scaledByThread.Values.SelectMany(d => d.Values).SelectMany(v => v.Items)))
+        foreach (var t in _source.Concat(_scaledCache.Values.Where(v => v.IsValueCreated).SelectMany(v => v.Value)))
         { t.Color.Dispose(); t.Mask.Dispose(); }
-        _scaledByThread.Dispose();
+        _scaledCache.Clear();
     }
 }
