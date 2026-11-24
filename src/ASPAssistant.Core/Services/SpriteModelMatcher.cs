@@ -36,8 +36,11 @@ public sealed class SpriteModelMatcher : IDisposable
             if (name != "onnxruntime") return IntPtr.Zero;
             string[] candidates =
             [
+                Path.Combine(AppContext.BaseDirectory, "libonnxruntime.so.1"),
+                Path.Combine(AppContext.BaseDirectory, "libonnxruntime.so"),
                 Path.Combine(AppContext.BaseDirectory, "runtimes", "linux-x64", "native", "libonnxruntime.so.1"),
                 Path.Combine(AppContext.BaseDirectory, "runtimes", "linux-x64", "native", "libonnxruntime.so"),
+                Path.Combine(PackageLayout.Root, "libonnxruntime.so.1"),
                 Path.Combine(PackageLayout.Root, "runtimes", "linux-x64", "native", "libonnxruntime.so.1"),
                 "libonnxruntime.so.1",
                 "libonnxruntime.so"

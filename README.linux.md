@@ -10,26 +10,40 @@
 | --- | --- | --- |
 | **核心引擎 (`ASPAssistant.Core`)** | `.NET 8` + `Maa.Framework` (ONNX CPU) + `OpenCvSharp4` (linux-x64 slim) + `Microsoft.ML.OnnxRuntime` + `SkiaSharp` | 完整保留开局/商店/场上干员（`sprite-model.onnx`）/盟约/敌人识别、站位模拟与阵容规划 |
 | **窗口追踪 (`NiriIpc.cs`)** | 直连 `$NIRI_SOCKET` Unix Socket JSON IPC | 自动识别 Lutris/Proton 下的 `明日方舟` (`arknights.exe`) 窗口（自动排除鹰角启动器 `games.exe`）、多显示器坐标与 HiDPI 缩放、工作区/滚屏可见性 |
-| **画面捕获 (`libstronghold_wayland.so`)** | 原生 `zwlr_screencopy_manager_v1` SHM（回退 `grim`） | ~9 ms 捕获游戏区域，**不污染剪贴板、不抓鼠标光标、无黄框、无需门户弹窗** |
+| **画面捕获 (`libstronghold_wayland.so`)** | 原生 `zwlr_screencopy_manager_v1` SHM（回退 `grim`） | ~3.5 ms 捕获 1080p 游戏区域，**不污染剪贴板、不抓鼠标光标、无黄框、无需门户弹窗** |
 | **键鼠输入 (`libstronghold_wayland.so`)** | 原生 `zwlr_virtual_pointer_manager_v1` + `zwp_virtual_keyboard_manager_v1` | **无需 root / ydotool / uinput**，支持绝对定位与相对位移拖拽（适配物资调配页拖动与自动操作） |
 | **透明点击穿透覆盖层 (`stronghold-overlay`)** | `GTK4` + `gtk4-layer-shell` + `Cairo` | 锚定游戏所在显示器，空输入区域 100% 穿透，支持商店卡框、推荐站位、待确认问号、升本提示、敌人路线 |
 | **侧栏、阵容广场与森空岛 (`stronghold-webview` + `UiBridgeServer`)** | `GTK3` + `WebKit2GTK-4.1` + 本地 HTTP/WebSocket 桥接与广场反向代理 | 支持阵容广场浏览/发布/点赞/云同步与登录弹窗、森空岛账号登录/退出、攻略广场列表、单篇攻略导入与历史战绩同步 |
 
-## 系统依赖 (Arch / CachyOS)
+## 快速安装（Release 预编译包）
+
+从 [Releases](https://github.com/X12101XX/StrongholdAssistant-Linux/releases) 下载 `StrongholdAssistant-<version>-linux-x64.tar.gz`（已内置自包含 .NET 8 运行时，**无需安装 `dotnet-sdk`**），安装图形与 Wayland 运行时依赖后解压即可运行：
+
+```bash
+# Arch / CachyOS 运行时依赖
+sudo pacman -S gtk4 gtk4-layer-shell webkit2gtk-4.1 gtk3 wl-clipboard grim zenity fontconfig
+
+tar -xzf StrongholdAssistant-1.3.8-linux.1-linux-x64.tar.gz
+cd StrongholdAssistant-1.3.8-linux.1-linux-x64
+./stronghold-assistant
+```
+
+## 从源码构建（Arch / CachyOS）
 
 ```bash
 sudo pacman -S dotnet-sdk-8.0 gtk4 gtk4-layer-shell webkit2gtk-4.1 gtk3 \
                wayland wayland-protocols wl-clipboard grim zenity fontconfig nodejs npm gcc make
 ```
 
-> 如未全局安装 `dotnet-sdk-8.0`，也可使用微软官方脚本安装到 `~/.dotnet`，`scripts/build-linux.sh` 与 `scripts/run-linux.sh` 会自动检测 `DOTNET_ROOT=$HOME/.dotnet`。
-
-## 构建与运行
+> 如未全局安装 `dotnet-sdk-8.0`，也可使用微软官方脚本安装到 `~/.dotnet`，`scripts/build-linux.sh`、`scripts/run-linux.sh` 与 `scripts/package-linux.sh` 会自动检测 `DOTNET_ROOT=$HOME/.dotnet`。
 
 ```bash
-chmod +x scripts/build-linux.sh scripts/run-linux.sh
+chmod +x scripts/build-linux.sh scripts/run-linux.sh scripts/package-linux.sh
 ./scripts/build-linux.sh
 ./scripts/run-linux.sh
+
+# 打自包含 tar.gz 发布包（输出到 dist/）
+./scripts/package-linux.sh 1.3.8-linux.1
 ```
 
 常用命令行参数：
