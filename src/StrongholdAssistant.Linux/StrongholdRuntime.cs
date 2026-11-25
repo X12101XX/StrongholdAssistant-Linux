@@ -156,6 +156,7 @@ internal sealed class StrongholdRuntime : IDisposable
         _capture.Connection.Changed += _ =>
         {
             _scanner?.InvalidateShop();
+            _api.LeaveAdviceShop();
             PublishConnection();
         };
 
@@ -164,6 +165,7 @@ internal sealed class StrongholdRuntime : IDisposable
         _tracker.GameWindowLost += () =>
         {
             _scanner?.InvalidateShop();
+            _api.LeaveAdviceShop();
             _lastGameRect = null;
             _shopItems = [];
             _overlay.UpdateShopItems([]);
@@ -221,6 +223,7 @@ internal sealed class StrongholdRuntime : IDisposable
         {
             var items = state.ShopItems.ToArray();
             var generation = _scanner.ShopGeneration;
+            if (_scanner.RemovingChangedShopItems) _api.LeaveAdviceShop();
             if (generation != _scanner.ShopGeneration) return;
             _shopItems = items;
             RefreshOverlay();
@@ -263,7 +266,8 @@ internal sealed class StrongholdRuntime : IDisposable
             var r = appGeom.PhysicalRect;
             return r.Left < screen.Right && r.Right > screen.Left && r.Top < screen.Bottom && r.Bottom > screen.Top;
         };
-        _scanner.ObserveFieldAsync = _api.ObserveFieldAsync;
+        _scanner.ObserveFieldAsync = (frame, at, economy, main, visible, shop) =>
+            _api.ObserveFieldAsync(frame, at, economy, main, visible, shop, !_scanner.BoardDetailVisible);
 
         void ConfigureCollection()
         {
@@ -302,6 +306,9 @@ internal sealed class StrongholdRuntime : IDisposable
         _scanner.BoardRoutesRequested = () => _api.BoardRoutesEnabled;
         _scanner.BoardFrameReady += (frame, reading) =>
         {
+            if (frame is null || !_scanner.BoardMainScreenVisible || !_scanner.BoardShopVisible
+                || _scanner.BoardDetailVisible || reading is not { IsRest: true })
+                _api.LeaveAdviceShop();
             _upgradeButton = frame is not null && _scanner.BoardMainScreenVisible
                 && _scanner.BoardShopVisible && !_scanner.BoardDetailVisible
                 && reading is { IsRest: true } ? reading.UpgradeButton : null;
@@ -687,6 +694,7 @@ internal sealed class StrongholdRuntime : IDisposable
         _closing = true;
         _shutdown.Cancel();
         try { _scanner?.Dispose(); } catch { }
+        try { _api?.CloseShopAdvice(); } catch { }
         try { _tracker.Dispose(); } catch { }
         try { _capture.Connection.Dispose(); } catch { }
         try { _ocr?.Dispose(); } catch { }

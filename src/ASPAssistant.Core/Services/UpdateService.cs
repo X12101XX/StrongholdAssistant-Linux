@@ -45,8 +45,13 @@ public partial class UpdateService(Version? currentVersion = null, string? appDi
     /// </summary>
     public const string FeedOverrideVariable = "STRONGHOLD_UPDATE_FEED";
 
+#if LINUX_PORT
+    public const string DefaultFeedUrl =
+        "https://api.github.com/repos/X12101XX/StrongholdAssistant-Linux/releases/latest";
+#else
     public const string DefaultFeedUrl =
         "https://api.github.com/repos/LBEILC/StrongholdAssistant/releases/latest";
+#endif
 
     private const string PackageSuffix = "-win-x64.zip";
     private const string ChecksumsAssetName = "SHA256SUMS.txt";
@@ -100,7 +105,11 @@ public partial class UpdateService(Version? currentVersion = null, string? appDi
     public static string ResolveFeedUrl(string? overrideUrl, string? githubApi = null)
         => string.IsNullOrWhiteSpace(overrideUrl)
             ? string.IsNullOrWhiteSpace(githubApi) ? DefaultFeedUrl
+#if LINUX_PORT
+                : githubApi.TrimEnd('/') + "/repos/X12101XX/StrongholdAssistant-Linux/releases/latest"
+#else
                 : githubApi.TrimEnd('/') + "/repos/LBEILC/StrongholdAssistant/releases/latest"
+#endif
             : overrideUrl.Trim();
 
     public async Task<UpdateInfo?> CheckForUpdateAsync(CancellationToken ct = default)

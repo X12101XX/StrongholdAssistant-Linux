@@ -474,9 +474,10 @@ internal sealed class LinuxOverlayController : IDisposable
 
     private static void EmitPlacement(List<string> cmds, OverlayPlacementPlan plan, BoardProjection projection, double w, double h)
     {
-        foreach (var move in plan.Moves)
+        var moves = plan.Moves.Where(m => m.From != m.To).ToArray();
+        var arrivals = moves.Select(m => m.To).Where(c => c.Zone == "board").ToHashSet();
+        foreach (var move in moves.OrderByDescending(m => m.To.Zone == "bench"))
         {
-            if (move.From == move.To) continue;
             bool leaving = move.To.Zone == "bench";
             var cell = leaving ? move.From : move.To;
             if (cell.Zone != "board") continue;
@@ -492,6 +493,15 @@ internal sealed class LinuxOverlayController : IDisposable
             var p3 = P(cell.Col + 0.08, cell.Row + 0.92);
 
             double r = leaving ? 1.0 : 0.133, g = leaving ? 0.541 : 0.890, b = leaving ? 0.502 : 0.698;
+            // 同格换人时（撤下旧干员、放上新干员）：下场改为格子左上角小标签「撤 XX」，避免红框遮挡上场干员与朝向（v1.3.9）。
+            if (leaving && arrivals.Contains(cell))
+            {
+                double tagFont = Math.Clamp(h * 0.0125, 10, 17);
+                double tagH = tagFont + 6;
+                double padX = Math.Clamp(h * 0.0045, 4, 8);
+                cmds.Add($"TAG {F(p0.X)} {F(p0.Y + tagH)} {F(tagH)} {F(tagFont)} 0 {F(r)} {F(g)} {F(b)} 0.95 1 0 0 0 0.65 {F(padX)} 2 2 撤 {move.Operator}");
+                continue;
+            }
             double sw = Math.Max(2.0, h * 0.0022);
             cmds.Add($"POLY 4 {F(p0.X)} {F(p0.Y)} {F(p1.X)} {F(p1.Y)} {F(p2.X)} {F(p2.Y)} {F(p3.X)} {F(p3.Y)} {F(r)} {F(g)} {F(b)} 0.95 {F(sw)} {(leaving ? 1 : 0)} {F(r)} {F(g)} {F(b)} 0.15 1");
 

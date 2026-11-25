@@ -62,7 +62,11 @@ public sealed partial class HostApi
     {
         if (settings.GameThemeAuto && _detectedTheme is { } detected)
             settings = settings with { GameTheme = detected };
+#if LINUX_PORT
+        settings = settings with { ToggleHotkey = Settings.ToggleHotkey, RunAsAdmin = Settings.RunAsAdmin };
+#else
         settings = settings with { ToggleHotkey = Settings.ToggleHotkey, RunAsAdmin = Settings.RunAsAdmin, FieldAuto = false };
+#endif
         if (settings.Control is null || settings.Control.Mode is not ("dryRun" or "confirm" or "auto")
             || settings.Control.StopHotkey != "" && HotkeyParser.Parse(settings.Control.StopHotkey) is null)
             throw new ArgumentException("自动操作设置无效。");
@@ -71,6 +75,7 @@ public sealed partial class HostApi
         var theme = Theme(settings.GameTheme);
         SettingsStore.SaveSettings(settings);
         lock (_fieldGate) Settings = settings;
+        if (!settings.ShopAdvice) ClearShopAdvice();
         if (!settings.Control.Enabled) StopControl("disabled");
         ConfigureLocalApi();
         ConfigureCollectionEnabled();
@@ -128,6 +133,7 @@ public sealed partial class HostApi
             && !names.Contains(o.Name)).Select(o => o.Name).ToArray();
         Volatile.Write(ref _trackedNames, names);
         Volatile.Write(ref _secondaryNames, secondary);
+        if (Settings.ShopAdvice) _ = UpdateShopAdviceAsync();
         ShopChanged?.Invoke();
     }
 

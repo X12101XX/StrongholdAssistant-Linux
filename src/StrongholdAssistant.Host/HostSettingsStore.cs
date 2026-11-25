@@ -44,7 +44,11 @@ public sealed class HostSettingsStore(string path)
             && skin is ("follow" or "terminal" or "ursus" or "closure" or "classic" or "glass" or "round") ? skin : "follow";
         var settings = new SettingsDto(json["gameTheme"]?.GetValue<string>() ?? "terminal",
             json["shopMarkers"]?.GetValue<bool>() ?? true,
+#if LINUX_PORT
+            json["autoCheckUpdate"]?.GetValue<bool>() ?? false)
+#else
             json["autoCheckUpdate"]?.GetValue<bool>() ?? true)
+#endif
         {
             PlacementGoal = json["placementGoal"]?.GetValue<string>() is "leak" or "layers" ? json["placementGoal"]!.GetValue<string>() : "balanced",
             GameThemeAuto = json["gameThemeAuto"]?.GetValue<bool>() ?? true,
@@ -52,8 +56,12 @@ public sealed class HostSettingsStore(string path)
             HideFromTaskbar = json["hideFromTaskbar"]?.GetValue<bool>() ?? false,
             Collect = json["collect"]?.GetValue<bool>() ?? false,
             // 场上自动识别暂时关掉（v1.2.4，用户 2026-11-16）：一拖人就重认、推荐位一直变，有人看不到开关老来问；
+#if LINUX_PORT
+            FieldAuto = json["fieldAuto"]?.GetValue<bool>() ?? false,
+#else
             // 设置里的入口也去掉了，只能点「识别」或按快捷键。旧设置里存的 true 一律不认
             FieldAuto = false,
+#endif
             Control = (json["control"]?.Deserialize<ControlSettings>(HostApi.JsonOptions) ?? new()).Local(),
             FieldHotkey = json["fieldHotkey"]?.GetValue<string>() ?? "Alt+F",
             RunAsAdmin = json["runAsAdmin"]?.GetValue<bool>() ?? true, // v1.0.5 起默认打开：玩家的游戏多是管理员身份，不同意授权就按普通身份运行
@@ -67,13 +75,18 @@ public sealed class HostSettingsStore(string path)
                 && weightValue.TryGetValue<string>(out var weight) && weight is ("normal" or "medium" or "bold") ? weight : "normal",
             PlazaNotices = json["plazaNotices"]?.GetValue<bool>() ?? true,
             Routes = RouteOverlaySettings.Load(json["routes"]),
+            ShopAdvice = json["shopAdvice"]?.GetValue<bool>() ?? false,
             OverlayLayers = json["overlayLayers"]?.Deserialize<OverlayLayerSettings>(HostApi.JsonOptions) ?? new(),
             MarkerStyles = MarkerStyles.Load(json["markerStyles"]),
             ShopScanSpeed = json["shopScanSpeed"] is JsonValue speedValue
                 && speedValue.TryGetValue<string>(out var speed) && speed is ("normal" or "fast") ? speed : "normal",
             UpdateSource = json["updateSource"]?.GetValue<string>() ?? "github",
             UpdateProxy = json["updateProxy"]?.GetValue<string>() ?? "",
+#if LINUX_PORT
+            AutoDownloadUpdate = json["autoDownloadUpdate"]?.GetValue<bool>() ?? false,
+#else
             AutoDownloadUpdate = json["autoDownloadUpdate"]?.GetValue<bool>() ?? true,
+#endif
             MirrorChyanCdk = json["mirrorChyanCdk"]?.GetValue<string>() ?? "",
             GitHubToken = UnprotectSecret(json["githubToken"]?.GetValue<string>()),
             GitHubTokenExpiresAt = json["githubTokenExpiresAt"]?.GetValue<string>() ?? "",

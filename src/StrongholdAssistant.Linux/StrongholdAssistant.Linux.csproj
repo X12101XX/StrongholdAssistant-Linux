@@ -44,6 +44,7 @@
     <Compile Include="../StrongholdAssistant.Host/HostApi.Roster.cs" Link="Shared/HostApi.Roster.cs" />
     <Compile Include="../StrongholdAssistant.Host/HostApi.RoundEnemies.cs" Link="Shared/HostApi.RoundEnemies.cs" />
     <Compile Include="../StrongholdAssistant.Host/HostApi.Shop.cs" Link="Shared/HostApi.Shop.cs" />
+    <Compile Include="../StrongholdAssistant.Host/HostApi.ShopAdvice.cs" Link="Shared/HostApi.ShopAdvice.cs" />
     <Compile Include="../StrongholdAssistant.Host/HostApi.Strategy.cs" Link="Shared/HostApi.Strategy.cs" />
     <Compile Include="../StrongholdAssistant.Host/HostApi.StrategyAdvice.cs" Link="Shared/HostApi.StrategyAdvice.cs" />
     <Compile Include="../StrongholdAssistant.Host/HostApi.Turn.cs" Link="Shared/HostApi.Turn.cs" />
@@ -56,6 +57,7 @@
     <Compile Include="../StrongholdAssistant.Host/PlazaTokenStore.cs" Link="Shared/PlazaTokenStore.cs" />
     <Compile Include="../StrongholdAssistant.Host/RoundJumpConfirmation.cs" Link="Shared/RoundJumpConfirmation.cs" />
     <Compile Include="../StrongholdAssistant.Host/RouteOverlaySettings.cs" Link="Shared/RouteOverlaySettings.cs" />
+    <Compile Include="../StrongholdAssistant.Host/ShopPolicy.cs" Link="Shared/ShopPolicy.cs" />
     <Compile Include="../StrongholdAssistant.Host/SklandGuideList.cs" Link="Shared/SklandGuideList.cs" />
     <Compile Include="../StrongholdAssistant.Host/SklandParser.cs" Link="Shared/SklandParser.cs" />
   </ItemGroup>

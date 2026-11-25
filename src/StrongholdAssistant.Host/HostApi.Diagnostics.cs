@@ -51,7 +51,7 @@ public sealed partial class HostApi
 #if LINUX_PORT
         return new
         {
-            version = typeof(HostApi).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "1.3.8-linux",
+            version = typeof(HostApi).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "1.3.9-linux",
             os = RuntimeInformation.OSDescription,
             waylandDisplay = Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"),
             niriSocket = NiriIpc.IsAvailable,

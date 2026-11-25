@@ -33,6 +33,11 @@ public sealed partial class HostApi
 
     public async Task<object> CheckUpdateAsync()
     {
+#if LINUX_PORT
+        // Linux 独立分支自 v1.3.9 起不再追踪原版 Windows 仓库更新，避免下载不兼容的 Windows 安装包。
+        await Task.CompletedTask;
+        return ReportUpdate(new { state = "latest" });
+#else
         if (AssistantProfile.Current.Name is not null) return new { state = "latest" };
         if (Volatile.Read(ref _downloadStatus) is { } downloading) return downloading;
         if (UpdatePrepared && _availableUpdate is { } prepared) return ReportUpdate(new { state = "ready", version = prepared.Version });
@@ -54,6 +59,7 @@ public sealed partial class HostApi
         status["source"] = info.Source;
         if (info.Notes is { } notes) status["notes"] = notes;
         return ReportUpdate(status);
+#endif
     }
 
     /// <summary>
@@ -80,15 +86,22 @@ public sealed partial class HostApi
     /// <summary>玩家点「更新」：没下就下、在下就等，下好了马上安装并重启。</summary>
     public Task ApplyUpdateAsync()
     {
+#if LINUX_PORT
+        return Task.CompletedTask;
+#else
         if (AssistantProfile.Current.Name is not null) throw new ArgumentException("请在默认配置中安装更新。");
         _installWhenReady = true;
         if (UpdatePrepared) { UpdateReady?.Invoke(); return Task.CompletedTask; }
         return DownloadUpdateAsync();
+#endif
     }
 
     /// <summary>后台下载新版本，下好推送 ready，等玩家点安装（v1.0.4）。</summary>
     public Task DownloadUpdateAsync()
     {
+#if LINUX_PORT
+        return Task.CompletedTask;
+#else
         if (_availableUpdate is not { } info || UpdatePrepared) return Task.CompletedTask;
         var status = new { state = "downloading", version = info.Version, progress = 0d };
         if (Interlocked.CompareExchange(ref _downloadStatus, status, null) is not null) return Task.CompletedTask;
@@ -97,6 +110,7 @@ public sealed partial class HostApi
         ReportUpdate(status);
         _ = Task.Run(() => PrepareUpdateAsync(info));
         return Task.CompletedTask;
+#endif
     }
 
     public void ClearPreparedUpdate()

@@ -1,4 +1,8 @@
-<a href="https://github.com/LBEILC/StrongholdAssistant/releases/latest"><img src=".github/readme/hero.jpg" alt="高效雅雅·卫戍协议助手 GXYY · Stronghold Assistant：《明日方舟》卫戍协议 PC 辅助侧栏" width="100%"></a>
+> [!IMPORTANT]
+> **StrongholdAssistant-Linux** 是面向 Linux（Wayland / niri / Lutris / Proton）的原生移植与优化分支。
+> 本分支已同步至原版 `v1.3.9`；为保证 Linux 原生兼容性与架构演进，自 `v1.3.9` 起不再追踪上游 Windows 仓库的更新，由本仓库独立维护（请从 [X12101XX/StrongholdAssistant-Linux Releases](https://github.com/X12101XX/StrongholdAssistant-Linux/releases) 获取 Linux 构建包）。
+
+<a href="https://github.com/X12101XX/StrongholdAssistant-Linux/releases/latest"><img src=".github/readme/hero.jpg" alt="高效雅雅·卫戍协议助手 GXYY · Stronghold Assistant：《明日方舟》卫戍协议 PC 辅助侧栏" width="100%"></a>
 
 <p align="center">
   <a href="https://github.com/LBEILC/StrongholdAssistant/releases/latest"><img src=".github/readme/button-release.png" alt="下载最新版" height="36"></a>
