@@ -17,43 +17,19 @@ public sealed class SpriteModelMatcher : IDisposable
     // 两局跨局预测分别校准为 .033005 / .096211，取较高值向上取整。
     public const double AutoFillGap = .09622;
 #if LINUX_PORT
-    private static int _ortResolverInstalled;
     [ThreadStatic] private static float[]? _inputScratch;
-    private readonly InferenceSession _session;
-    private readonly string _inputName;
+    private readonly byte[] _modelBytes;
+    private readonly object _sessionGate = new();
+    private InferenceSession _session;
+    private string _inputName;
+    private bool _supportsBatch;
+    private bool _usingCuda;
+    public bool UsingCuda => _usingCuda;
 #else
     private readonly ThreadLocal<Net> _nets;
 #endif
     private readonly double _modelWeight;
     private readonly Dictionary<string, int> _indices;
-
-#if LINUX_PORT
-    private static void EnsureOnnxRuntimeResolver()
-    {
-        if (Interlocked.Exchange(ref _ortResolverInstalled, 1) != 0) return;
-        NativeLibrary.SetDllImportResolver(typeof(InferenceSession).Assembly, (name, assembly, searchPath) =>
-        {
-            if (name != "onnxruntime") return IntPtr.Zero;
-            string[] candidates =
-            [
-                Path.Combine(AppContext.BaseDirectory, "libonnxruntime.so.1"),
-                Path.Combine(AppContext.BaseDirectory, "libonnxruntime.so"),
-                Path.Combine(AppContext.BaseDirectory, "runtimes", "linux-x64", "native", "libonnxruntime.so.1"),
-                Path.Combine(AppContext.BaseDirectory, "runtimes", "linux-x64", "native", "libonnxruntime.so"),
-                Path.Combine(PackageLayout.Root, "libonnxruntime.so.1"),
-                Path.Combine(PackageLayout.Root, "runtimes", "linux-x64", "native", "libonnxruntime.so.1"),
-                "libonnxruntime.so.1",
-                "libonnxruntime.so"
-            ];
-            foreach (var c in candidates)
-            {
-                if (NativeLibrary.TryLoad(c, out var handle))
-                    return handle;
-            }
-            return IntPtr.Zero;
-        });
-    }
-#endif
 
     public SpriteModelMatcher(string modelPath, string classesPath, double modelWeight = ModelWeight)
     {
@@ -63,10 +39,8 @@ public sealed class SpriteModelMatcher : IDisposable
         // 读成字节再交给推理引擎：避免路径编码问题。
         var model = File.ReadAllBytes(modelPath);
 #if LINUX_PORT
-        EnsureOnnxRuntimeResolver();
-        using var opts = new SessionOptions { IntraOpNumThreads = 1, InterOpNumThreads = 1 };
-        _session = new InferenceSession(model, opts);
-        _inputName = _session.InputNames[0];
+        _modelBytes = model;
+        (_session, _inputName, _supportsBatch, _usingCuda) = CreateSession(model);
 #else
         _nets = new(() =>
         {
@@ -78,21 +52,58 @@ public sealed class SpriteModelMatcher : IDisposable
 #endif
     }
 
-    public unsafe float[] Predict(Mat crop)
-    {
-        using var timing = FieldRecognitionTiming.Measure("model");
-        if (crop.Empty() || crop.Width != 180 || crop.Height != 204 || crop.Type() != MatType.CV_8UC3)
-            throw new ArgumentException("小人模型输入必须为 180×204 BGR 图块。", nameof(crop));
 #if LINUX_PORT
+    private static (InferenceSession Session, string InputName, bool SupportsBatch, bool UsingCuda) CreateSession(byte[] model)
+    {
+        int cpuThreads = Math.Clamp(Environment.ProcessorCount / 2, 2, 4);
+        using var opts = OnnxRuntimeConfig.CreateSessionOptions("sprite", cpuThreads, out var usingCuda, out _);
+        InferenceSession session;
+        try
+        {
+            session = new InferenceSession(model, opts);
+        }
+        catch (Exception ex) when (usingCuda)
+        {
+            AppLogger.Warn("ONNX", $"[sprite] CUDA 会话创建失败，回落 CPU: {ex.GetBaseException().Message}");
+            using var fallback = new SessionOptions
+            {
+                IntraOpNumThreads = cpuThreads,
+                InterOpNumThreads = 1,
+                GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL
+            };
+            session = new InferenceSession(model, fallback);
+            usingCuda = false;
+            OnnxRuntimeConfig.ReportConsumer("sprite", "CPU", $"CUDA 会话失败，已回落 CPU（{cpuThreads} 线程）");
+        }
+        var inputName = session.InputNames[0];
+        bool supportsBatch = session.InputMetadata.TryGetValue(inputName, out var meta)
+            && meta.Dimensions.Length >= 4 && meta.Dimensions[0] <= 0;
+        return (session, inputName, supportsBatch, usingCuda);
+    }
+
+    public void ReloadProvider()
+    {
+        lock (_sessionGate)
+        {
+            var old = _session;
+            (_session, _inputName, _supportsBatch, _usingCuda) = CreateSession(_modelBytes);
+            old.Dispose();
+        }
+    }
+
+    private static unsafe void FillCropNchw(Mat crop, float[] buffer, int batchOffset)
+    {
         const int targetW = 160;
         const int targetH = 192;
-        using var resized = new Mat();
-        Cv2.Resize(crop, resized, new Size(targetW, targetH), 0, 0, InterpolationFlags.Linear);
-        var inputData = _inputScratch ??= new float[3 * targetH * targetW];
         const int planeSize = targetH * targetW;
         const float inv255 = 1f / 255f;
+        using var resized = new Mat();
+        Cv2.Resize(crop, resized, new Size(targetW, targetH), 0, 0, InterpolationFlags.Linear);
         byte* basePtr = (byte*)resized.DataPointer;
         long step = resized.Step();
+        int rBase = batchOffset;
+        int gBase = batchOffset + planeSize;
+        int bBase = batchOffset + planeSize * 2;
         for (int y = 0; y < targetH; y++)
         {
             byte* row = basePtr + y * step;
@@ -100,15 +111,75 @@ public sealed class SpriteModelMatcher : IDisposable
             for (int x = 0; x < targetW; x++)
             {
                 int idx = rowOffset + x;
-                // swapRB: BGR -> RGB, NCHW layout [1, 3, 192, 160]
-                inputData[idx] = row[x * 3 + 2] * inv255;
-                inputData[planeSize + idx] = row[x * 3 + 1] * inv255;
-                inputData[planeSize * 2 + idx] = row[x * 3 + 0] * inv255;
+                int px = x * 3;
+                // swapRB: BGR -> RGB, NCHW layout [N, 3, 192, 160]
+                buffer[rBase + idx] = row[px + 2] * inv255;
+                buffer[gBase + idx] = row[px + 1] * inv255;
+                buffer[bBase + idx] = row[px] * inv255;
             }
         }
+    }
+#endif
+
+    public float[][] PredictBatch(IReadOnlyList<Mat> crops)
+    {
+        if (crops.Count == 0) return [];
+        if (crops.Count == 1) return [Predict(crops[0])];
+#if LINUX_PORT
+        if (_supportsBatch)
+        {
+            using var timing = FieldRecognitionTiming.Measure("model");
+            const int targetW = 160;
+            const int targetH = 192;
+            const int sampleSize = 3 * targetH * targetW;
+            int n = crops.Count;
+            var batchBuffer = new float[n * sampleSize];
+            for (int i = 0; i < n; i++)
+            {
+                var crop = crops[i];
+                if (crop.Empty() || crop.Width != 180 || crop.Height != 204 || crop.Type() != MatType.CV_8UC3)
+                    throw new ArgumentException("小人模型输入必须为 180×204 BGR 图块。", nameof(crops));
+                FillCropNchw(crop, batchBuffer, i * sampleSize);
+            }
+            var tensor = new DenseTensor<float>(batchBuffer, [n, 3, targetH, targetW]);
+            lock (_sessionGate)
+            {
+                using var results = _session.Run([NamedOnnxValue.CreateFromTensor(_inputName, tensor)]);
+                var flat = results[0].AsTensor<float>().ToArray();
+                int classes = flat.Length / n;
+                var output = new float[n][];
+                for (int i = 0; i < n; i++)
+                {
+                    var row = new float[classes];
+                    Array.Copy(flat, i * classes, row, 0, classes);
+                    output[i] = row;
+                }
+                return output;
+            }
+        }
+#endif
+        var single = new float[crops.Count][];
+        for (int i = 0; i < crops.Count; i++)
+            single[i] = Predict(crops[i]);
+        return single;
+    }
+
+    public float[] Predict(Mat crop)
+    {
+        using var timing = FieldRecognitionTiming.Measure("model");
+        if (crop.Empty() || crop.Width != 180 || crop.Height != 204 || crop.Type() != MatType.CV_8UC3)
+            throw new ArgumentException("小人模型输入必须为 180×204 BGR 图块。", nameof(crop));
+#if LINUX_PORT
+        const int targetW = 160;
+        const int targetH = 192;
+        var inputData = _inputScratch ??= new float[3 * targetH * targetW];
+        FillCropNchw(crop, inputData, 0);
         var tensor = new DenseTensor<float>(inputData, [1, 3, targetH, targetW]);
-        using var results = _session.Run([NamedOnnxValue.CreateFromTensor(_inputName, tensor)]);
-        return results[0].AsEnumerable<float>().ToArray();
+        lock (_sessionGate)
+        {
+            using var results = _session.Run([NamedOnnxValue.CreateFromTensor(_inputName, tensor)]);
+            return results[0].AsEnumerable<float>().ToArray();
+        }
 #else
         using var blob = CvDnn.BlobFromImage(crop, 1d / 255, new Size(160, 192), swapRB: true, crop: false);
         var net = _nets.Value!;

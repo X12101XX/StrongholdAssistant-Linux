@@ -57,6 +57,13 @@
     app.settings[k] = v
     app.saveSettings()
   }
+  const setOnnxProvider = async (v: 'auto' | 'cuda' | 'cpu') => {
+    if ((app.settings.onnxProvider ?? 'auto') === v) return
+    app.settings.onnxProvider = v
+    await app.saveSettings()
+    await app.refreshAppInfo()
+    app.showToast(v === 'cpu' ? 'ONNX 推理已切换为 CPU 多线程' : `ONNX 推理已切换为 ${app.appInfo.onnx?.activeProvider ?? v.toUpperCase()}`)
+  }
   // 敌人路线（v0.9.0）：一组设置整体存
   const rt = $derived(app.settings.routes)
   // 覆盖层新加的两项（任务 169）；宿主还没补这一项时按默认（都开）显示
@@ -613,9 +620,28 @@
 
     <section>
       <label class="row">
-        <span class="lbl"><b>自动识别场上</b><small>休整期后台高频自动识别棋盘与备战区干员，并自动刷新站位推荐</small></span>
+        <span class="lbl"><b>自动识别场上</b><small>休整期自动监测棋盘变动，零手动干预实时更新干员与站位推荐（画面静止时不占 CPU）</small></span>
         <input type="checkbox" class="sw" checked={app.settings.fieldAuto} onchange={(e) => set('fieldAuto', e.currentTarget.checked)} />
       </label>
+    </section>
+
+    <section>
+      <div class="hk">
+        <span class="hkl">ONNX 推理加速</span>
+        <div class="scales three grow">
+          <button class:on={(app.settings.onnxProvider ?? 'auto') === 'auto'} onclick={() => setOnnxProvider('auto')}>自动</button>
+          <button class:on={app.settings.onnxProvider === 'cuda'} onclick={() => setOnnxProvider('cuda')}>CUDA</button>
+          <button class:on={app.settings.onnxProvider === 'cpu'} onclick={() => setOnnxProvider('cpu')}>CPU</button>
+        </div>
+      </div>
+      {#if app.appInfo.onnx}
+        {@const ox = app.appInfo.onnx}
+        <p class="note">
+          当前引擎：<b>{ox.activeProvider}</b>{#if Object.keys(ox.consumers ?? {}).length}（{Object.entries(ox.consumers).map(([k, v]) => `${k}:${v}`).join(' · ')}）{/if}。{ox.detail}
+        </p>
+      {:else}
+        <p class="note">自动模式下优先使用 NVIDIA CUDA GPU 加速小人识别、商店建议和 OCR 模型；未安装 CUDA 运行库时自动回落多线程 CPU。</p>
+      {/if}
     </section>
 
     <section>

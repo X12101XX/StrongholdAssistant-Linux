@@ -12,7 +12,27 @@ public sealed partial class HostApi
     private readonly object _autoFieldQueueGate = new();
     private AutoFieldRequest? _pendingAutoField;
     private bool _autoFieldDraining;
+    private byte[]? _lastAutoFieldPrint;
+    private (int? Round, int? Money, bool MainScreen, bool ShopVisible, int ShopCount, int Generation) _lastAutoFieldMeta;
+    private DateTimeOffset _lastAutoFieldAt;
     public Func<Task<FieldState>>? ReadCurrentField { get; set; }
+
+    internal void ReloadOnnxProviders()
+    {
+#if LINUX_PORT
+        try
+        {
+            _fieldSpriteModel?.ReloadProvider();
+            _fieldReader?.ReloadOnnxProvider();
+            if (_shopPolicy?.IsValueCreated == true)
+                _shopPolicy.Value.ReloadProvider();
+        }
+        catch (Exception ex)
+        {
+            ASPAssistant.Core.AppLogger.Warn("ONNX", $"重载 ONNX 推理引擎失败：{ex.Message}");
+        }
+#endif
+    }
 
     public async Task<FieldState> RecognizeFieldAsync()
     {
@@ -186,7 +206,29 @@ public sealed partial class HostApi
                 try
                 {
                     if (!Settings.FieldAuto && !next.Advice) continue;
+                    // Proactive smart diffing: immediately recognize when board/bench pixels or economy/shop/round change,
+                    // while skipping redundant CV/ONNX work on static frames (with a 2.2s heartbeat to self-heal).
+                    int gen;
+                    FieldState? curField;
+                    lock (_fieldGate) { gen = _fieldGeneration; curField = _fieldTracker.State; }
+                    var meta = (next.Economy?.Round, next.Economy?.Money, next.MainScreen, next.ShopVisible, next.Shop.Count, gen);
+                    byte[]? print = next.MainScreen && next.Economy is { IsRest: true } ? ComputeBoardFingerprint(next.Frame) : null;
+                    bool shouldScan = curField is null
+                        || curField.Round != next.Economy?.Round
+                        || meta != _lastAutoFieldMeta
+                        || print is null
+                        || _lastAutoFieldPrint is null
+                        || (next.At - _lastAutoFieldAt).TotalMilliseconds >= 2200
+                        || BoardFingerprintDiff(_lastAutoFieldPrint, print) >= 2.2;
+                    if (!shouldScan)
+                    {
+                        if (next.Advice) _ = UpdateShopAdviceAsync();
+                        continue;
+                    }
                     await ReadFieldCoreAsync(next.Frame, next.At, next.Economy, next.MainScreen, next.ShopVisible, next.Shop, false, false).ConfigureAwait(false);
+                    _lastAutoFieldPrint = print;
+                    _lastAutoFieldMeta = meta;
+                    _lastAutoFieldAt = next.At;
                     if (next.Advice) _ = UpdateShopAdviceAsync();
                 }
                 catch (Exception ex)
@@ -207,7 +249,11 @@ public sealed partial class HostApi
     {
         if (economy is not { IsRest: true } || !mainScreen)
             throw new RecognitionException("现在不在休整期的棋盘画面，先关掉干员详情等面板、回到棋盘再点");
-        lock (_autoFieldQueueGate) _pendingAutoField = null;
+        lock (_autoFieldQueueGate)
+        {
+            _pendingAutoField = null;
+            _lastAutoFieldPrint = null;
+        }
         using (FieldRecognitionTiming.Measure("fieldWait")) await _fieldScanGate.WaitAsync();
         try
         {
@@ -312,7 +358,11 @@ public sealed partial class HostApi
 
     private void ResetField()
     {
-        lock (_autoFieldQueueGate) _pendingAutoField = null;
+        lock (_autoFieldQueueGate)
+        {
+            _pendingAutoField = null;
+            _lastAutoFieldPrint = null;
+        }
         InvalidateCollectionFrame();
         _fieldRestRound = null;
         ResetPlacement();
@@ -341,5 +391,72 @@ public sealed partial class HostApi
         RecomputeTracking();
         // 接口事件不允许 null，用空状态通知清除；field() 仍返回未识别的 null。
         if (hadState) Changed?.Invoke("field", new FieldState(null, null, DateTimeOffset.UtcNow.ToString("O"), [], []));
+    }
+
+    private static byte[]? ComputeBoardFingerprint(byte[] frame)
+    {
+        const int cols = 24, rows = 12;
+        if (frame.Length < 54) return null;
+        // Fast zero-decode path for uncompressed 24/32bpp BMP frames from Linux ScreenCaptureService.
+        if (frame[0] == 'B' && frame[1] == 'M')
+        {
+            int pixelOffset = BitConverter.ToInt32(frame, 10);
+            int width = BitConverter.ToInt32(frame, 18);
+            int rawHeight = BitConverter.ToInt32(frame, 22);
+            int height = Math.Abs(rawHeight);
+            bool topDown = rawHeight < 0;
+            int bpp = BitConverter.ToInt16(frame, 28) / 8;
+            if (width >= 64 && height >= 64 && bpp is 3 or 4)
+            {
+                int stride = (width * bpp + 3) & ~3;
+                if (pixelOffset >= 54 && pixelOffset + (long)stride * height <= frame.Length)
+                {
+                    var sample = new byte[cols * rows];
+                    int k = 0;
+                    for (int r = 0; r < rows; r++)
+                    {
+                        int y = (int)((0.14 + (r + 0.5) * 0.66 / rows) * height);
+                        int bmpRow = topDown ? y : (height - 1 - y);
+                        int rowStart = pixelOffset + bmpRow * stride;
+                        for (int c = 0; c < cols; c++)
+                        {
+                            int x = (int)((0.12 + (c + 0.5) * 0.76 / cols) * width);
+                            int off = rowStart + x * bpp;
+                            sample[k++] = (byte)((frame[off] * 29 + frame[off + 1] * 150 + frame[off + 2] * 77) >> 8);
+                        }
+                    }
+                    return sample;
+                }
+            }
+        }
+        try
+        {
+            using var ms = new MemoryStream(frame);
+            using var bmp = new System.Drawing.Bitmap(ms);
+            int width = bmp.Width, height = bmp.Height;
+            var sample = new byte[cols * rows];
+            int k = 0;
+            for (int r = 0; r < rows; r++)
+            {
+                int y = Math.Clamp((int)((0.14 + (r + 0.5) * 0.66 / rows) * height), 0, height - 1);
+                for (int c = 0; c < cols; c++)
+                {
+                    int x = Math.Clamp((int)((0.12 + (c + 0.5) * 0.76 / cols) * width), 0, width - 1);
+                    var px = bmp.GetPixel(x, y);
+                    sample[k++] = (byte)((px.B * 29 + px.G * 150 + px.R * 77) >> 8);
+                }
+            }
+            return sample;
+        }
+        catch { return null; }
+    }
+
+    private static double BoardFingerprintDiff(byte[] a, byte[] b)
+    {
+        if (a.Length != b.Length || a.Length == 0) return double.MaxValue;
+        long sum = 0;
+        for (int i = 0; i < a.Length; i++)
+            sum += Math.Abs(a[i] - b[i]);
+        return (double)sum / a.Length;
     }
 }

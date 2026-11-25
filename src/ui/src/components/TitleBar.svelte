@@ -99,6 +99,13 @@
       {#if plaza.unread}<em class="badge term">{plaza.unread > 99 ? '99+' : plaza.unread}</em>{/if}
     </button>
   {/if}
+  {#if app.appInfo.onnx?.activeProvider.startsWith('CUDA')}
+    <button
+      class="gpu"
+      title="ONNX CUDA GPU 加速已启用：{app.appInfo.onnx.detail}（点此查看设置）"
+      onclick={() => (app.collapsed && app.setCollapsed(false), app.openSettings('game'))}
+    >CUDA</button>
+  {/if}
   <button class="wbtn set" class:dot-new={app.update.state === 'available'} title="设置" aria-label="设置" onclick={() => (app.collapsed && app.setCollapsed(false), app.openSettings(app.update.state === 'available' ? 'about' : undefined))}>
     <Icon name="settings" size={15} />
   </button>
@@ -217,6 +224,23 @@
   .ok .dot {
     background: var(--mint);
     box-shadow: 0 0 6px var(--mint);
+  }
+  .gpu {
+    -webkit-app-region: no-drag;
+    flex: none;
+    font-family: var(--font-term);
+    font-size: var(--fs-3xs);
+    font-weight: var(--fw-bold);
+    letter-spacing: 0.04em;
+    padding: 1px 5px;
+    border-radius: var(--r-1);
+    color: var(--mint);
+    background: var(--mint-tint);
+    border: 1px solid rgb(var(--mint-rgb) / 0.35);
+    line-height: 1.3;
+  }
+  .gpu:hover {
+    background: rgb(var(--mint-rgb) / 0.22);
   }
   .wbtn {
     -webkit-app-region: no-drag;

@@ -23,6 +23,7 @@ typedef struct {
     bool session_mode;
     bool hidden;
     bool open_external_new_window;
+    int crash_reloads;
     char *line_buf;
     size_t line_len;
     size_t line_cap;
@@ -156,6 +157,15 @@ static void emit_load_event(const char *ev, const char *url, const char *err) {
     }
     fputs("}\n", stdout);
     fflush(stdout);
+}
+
+static void on_web_process_terminated(WebKitWebView *web, WebKitWebProcessTerminationReason reason, gpointer data) {
+    (void)data;
+    fprintf(stderr, "stronghold-webview: web process terminated (reason=%d)\n", (int)reason);
+    if (!g_app.session_mode && g_app.url[0] && g_app.crash_reloads < 5) {
+        g_app.crash_reloads++;
+        webkit_web_view_load_uri(web, g_app.url);
+    }
 }
 
 static void on_host_window_message(WebKitUserContentManager *mgr, WebKitJavascriptResult *res, gpointer data) {
@@ -497,6 +507,14 @@ int main(int argc, char **argv) {
     webkit_settings_set_enable_developer_extras(settings, g_app.dev_tools);
     webkit_settings_set_javascript_can_access_clipboard(settings, TRUE);
     webkit_settings_set_enable_smooth_scrolling(settings, TRUE);
+    webkit_settings_set_enable_webgl(settings, TRUE);
+    webkit_settings_set_enable_back_forward_navigation_gestures(settings, FALSE);
+    const char *hw_env = getenv("STRONGHOLD_WEBKIT_HW");
+    if (!hw_env || strcmp(hw_env, "0") != 0) {
+        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
+    } else {
+        webkit_settings_set_hardware_acceleration_policy(settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
+    }
 
     if (!g_app.session_mode) {
         GdkRGBA bg = { 0.086, 0.094, 0.110, 1.0 };
@@ -506,6 +524,7 @@ int main(int argc, char **argv) {
     g_signal_connect(web, "decide-policy", G_CALLBACK(on_decide_policy), NULL);
     g_signal_connect(web, "load-changed", G_CALLBACK(on_load_changed), NULL);
     g_signal_connect(web, "load-failed", G_CALLBACK(on_load_failed), NULL);
+    g_signal_connect(web, "web-process-terminated", G_CALLBACK(on_web_process_terminated), NULL);
     g_signal_connect(web, "context-menu", G_CALLBACK(on_context_menu), NULL);
     g_signal_connect(win, "destroy", G_CALLBACK(on_destroy), NULL);
 

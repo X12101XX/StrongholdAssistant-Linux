@@ -55,6 +55,7 @@ public sealed partial class HostApi
             os = RuntimeInformation.OSDescription,
             waylandDisplay = Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"),
             niriSocket = NiriIpc.IsAvailable,
+            onnx = ASPAssistant.Core.Services.OnnxRuntimeConfig.GetStatus(),
             detectedTheme = _detectedTheme,
             configuredTheme = Settings.GameTheme,
             monitors = NiriIpc.GetOutputs().Values.ToArray(),

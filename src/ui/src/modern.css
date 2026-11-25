@@ -29,7 +29,7 @@ html:root[data-modern] {
   --glass: rgb(var(--bg-1-rgb) / 0.6);
   --glass-strong: rgb(var(--bg-1-rgb) / 0.78);
   --glass-line: rgb(var(--hl-rgb) / 0.08);
-  --glass-blur: blur(28px) saturate(160%);
+  --glass-blur: blur(14px) saturate(140%);
   --pop-shadow: 0 8px 28px rgb(var(--shade-rgb) / 0.45), 0 0 0 1px var(--glass-line);
   /* 页面底：淡彩光斑，让磨砂层有东西可透 */
   --page:

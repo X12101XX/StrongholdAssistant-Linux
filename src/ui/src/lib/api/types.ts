@@ -743,6 +743,16 @@ export interface ShopAdvice {
   preference: null | { topShare: number; logitGap: number | null; legalCount: number }
 }
 
+export type OnnxProvider = 'auto' | 'cuda' | 'cpu'
+export interface OnnxRuntimeStatus {
+  requestedMode: OnnxProvider
+  activeProvider: string
+  cudaAvailable: boolean
+  libraryPath?: string | null
+  detail: string
+  consumers: Record<string, string>
+}
+
 export interface Settings {
   /**
    * 游戏主题。gameThemeAuto 为 true 时是宿主最近一次认到的主题（宿主认到新主题就改这一项并保存，下次启动先用它）；
@@ -779,6 +789,8 @@ export interface Settings {
    * 多占一些 CPU）。宿主按这个调识别节奏，改了马上生效
    */
   shopScanSpeed: 'normal' | 'fast'
+  /** ONNX 推理后端（Linux 版）：'auto' 自动优先 CUDA、'cuda' 优先 CUDA、'cpu' 仅 CPU */
+  onnxProvider?: OnnxProvider
   /** 敌人路线覆盖（v0.9.0）：在游戏棋盘上画本回合敌人会走的路线。本局页「敌方情报」里的快速开关就是 routes.enabled */
   routes: RouteOverlaySettings
   /**
@@ -1051,6 +1063,8 @@ export interface AppInfo {
   workbench: boolean
   /** 助手现在是不是以管理员身份运行（v0.9.1）。Settings.runAsAdmin 打开但用户没同意系统确认时仍是 false */
   elevated: boolean
+  /** Linux ONNX 运行时状态（CUDA / CPU） */
+  onnx?: OnnxRuntimeStatus
 }
 
 /** 备份文件的预览：导入前给用户确认 */

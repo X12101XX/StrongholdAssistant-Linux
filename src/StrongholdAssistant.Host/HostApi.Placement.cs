@@ -103,7 +103,7 @@ public sealed partial class HostApi
             {
                 try
                 {
-                    if (!force) await Task.Delay(350, stop.Token);
+                    if (!force) await Task.Delay(200, stop.Token);
                     var result = _placementAdapter.Compute(input, stop.Token);
                     PublishPlacement(result, generation, timing is null ? null : () =>
                     {

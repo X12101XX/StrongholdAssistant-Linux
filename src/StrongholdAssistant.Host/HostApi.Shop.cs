@@ -73,8 +73,18 @@ public sealed partial class HostApi
         settings = settings with { Control = settings.Control.Local() };
         ValidateSettings(settings);
         var theme = Theme(settings.GameTheme);
+#if LINUX_PORT
+        bool onnxChanged = !string.Equals(Settings.OnnxProvider, settings.OnnxProvider, StringComparison.OrdinalIgnoreCase);
+#endif
         SettingsStore.SaveSettings(settings);
         lock (_fieldGate) Settings = settings;
+#if LINUX_PORT
+        if (onnxChanged)
+        {
+            OnnxRuntimeConfig.Configure(settings.OnnxProvider);
+            ReloadOnnxProviders();
+        }
+#endif
         if (!settings.ShopAdvice) ClearShopAdvice();
         if (!settings.Control.Enabled) StopControl("disabled");
         ConfigureLocalApi();
@@ -217,6 +227,9 @@ public sealed partial class HostApi
         dataDir = DataDirectory,
         hotkeyFailed = HotkeyFailed,
         workbench = StartupWorkbench,
+#if LINUX_PORT
+        onnx = OnnxRuntimeConfig.GetStatus(),
+#endif
         version = typeof(HostApi).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
             .InformationalVersion.Split('+')[0]
     };

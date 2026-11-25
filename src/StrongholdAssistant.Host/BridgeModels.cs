@@ -71,6 +71,7 @@ public sealed record SettingsDto(string GameTheme, bool ShopMarkers, bool AutoCh
     public string UiFontWeight { get; init; } = "normal";
     public bool PlazaNotices { get; init; } = true;
     public string ShopScanSpeed { get; init; } = "normal";
+    public string OnnxProvider { get; init; } = "auto";
     public string UpdateSource { get; init; } = "github";
     public string UpdateProxy { get; init; } = "";
     public bool AutoDownloadUpdate { get; init; } = true;

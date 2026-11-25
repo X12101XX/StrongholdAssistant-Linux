@@ -84,8 +84,44 @@ public sealed class MaaOcrEngine : IOcrEngine, IDisposable
         var controller = new MaaCustomController(_nullController);
         controller.LinkStart().Wait();
         var resource = new MaaResource();
+#if LINUX_PORT
+        bool ocrCuda = false;
+        if (OnnxRuntimeConfig.ShouldTryCuda())
+        {
+            try
+            {
+                resource.SetOption_InferenceExecutionProvider(InferenceExecutionProvider.CUDA);
+                resource.SetOption_InferenceDevice(OnnxRuntimeConfig.DeviceId);
+                ocrCuda = true;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("ONNX", $"[ocr] MaaFramework CUDA 选项设置失败，使用 CPU: {ex.GetBaseException().Message}");
+                resource.SetInference_UseCpu();
+            }
+        }
+        else
+        {
+            resource.SetInference_UseCpu();
+        }
+        try
+        {
+            resource.AppendOcrModel(Path.Combine(resourcePath, "model", "ocr")).Wait();
+            OnnxRuntimeConfig.ReportConsumer("ocr", ocrCuda ? $"CUDA:{OnnxRuntimeConfig.DeviceId}" : "CPU");
+        }
+        catch (Exception ex) when (ocrCuda)
+        {
+            AppLogger.Warn("ONNX", $"[ocr] MaaFramework CUDA OCR 模型加载失败，回落 CPU: {ex.GetBaseException().Message}");
+            resource.Dispose();
+            resource = new MaaResource();
+            resource.SetInference_UseCpu();
+            resource.AppendOcrModel(Path.Combine(resourcePath, "model", "ocr")).Wait();
+            OnnxRuntimeConfig.ReportConsumer("ocr", "CPU");
+        }
+#else
         resource.SetInference_UseCpu();
         resource.AppendOcrModel(Path.Combine(resourcePath, "model", "ocr")).Wait();
+#endif
         _tasker = new MaaTasker(controller, resource, DisposeOptions.All);
     }
 

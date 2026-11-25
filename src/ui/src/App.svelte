@@ -178,7 +178,7 @@
     <main bind:this={scroller}>
       {#key app.tab}
         <!-- 历史页在工作台里左右两栏各自滚动，需要撑满滚动区的高度 -->
-        <div class:fill={app.tab === 'history' || (app.workbench && app.tab === 'lineup')} in:fly={{ x: 28 * dir, duration: 240, easing: cubicOut }}>
+        <div class:fill={app.tab === 'history' || (app.workbench && app.tab === 'lineup')} in:fly={{ x: 10 * dir, duration: 90, easing: cubicOut }}>
           <!-- 一页渲染出错只挡住这一页，别的页照常能切 -->
           <svelte:boundary onerror={(e) => reportUiError(`${app.tab} 页出错`, e)}>
             {#if app.tab === 'match'}

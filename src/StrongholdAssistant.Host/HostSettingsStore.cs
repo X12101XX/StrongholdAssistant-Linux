@@ -57,7 +57,7 @@ public sealed class HostSettingsStore(string path)
             Collect = json["collect"]?.GetValue<bool>() ?? false,
             // 场上自动识别暂时关掉（v1.2.4，用户 2026-11-16）：一拖人就重认、推荐位一直变，有人看不到开关老来问；
 #if LINUX_PORT
-            FieldAuto = json["fieldAuto"]?.GetValue<bool>() ?? false,
+            FieldAuto = json["fieldAuto"]?.GetValue<bool>() ?? true,
 #else
             // 设置里的入口也去掉了，只能点「识别」或按快捷键。旧设置里存的 true 一律不认
             FieldAuto = false,
@@ -79,7 +79,15 @@ public sealed class HostSettingsStore(string path)
             OverlayLayers = json["overlayLayers"]?.Deserialize<OverlayLayerSettings>(HostApi.JsonOptions) ?? new(),
             MarkerStyles = MarkerStyles.Load(json["markerStyles"]),
             ShopScanSpeed = json["shopScanSpeed"] is JsonValue speedValue
-                && speedValue.TryGetValue<string>(out var speed) && speed is ("normal" or "fast") ? speed : "normal",
+                && speedValue.TryGetValue<string>(out var speed) && speed is ("normal" or "fast") ? speed
+#if LINUX_PORT
+                : "fast",
+            OnnxProvider = json["onnxProvider"] is JsonValue onnxValue
+                && onnxValue.TryGetValue<string>(out var provider) && provider is ("auto" or "cuda" or "cpu") ? provider : "auto",
+#else
+                : "normal",
+            OnnxProvider = "auto",
+#endif
             UpdateSource = json["updateSource"]?.GetValue<string>() ?? "github",
             UpdateProxy = json["updateProxy"]?.GetValue<string>() ?? "",
 #if LINUX_PORT
@@ -144,6 +152,8 @@ public sealed class HostSettingsStore(string path)
         if (settings.OverlayLayers is null) throw new ArgumentException("覆盖层设置无效。");
         if (settings.ShopScanSpeed is not ("normal" or "fast"))
             throw new ArgumentException("商店识别速度无效。");
+        if (settings.OnnxProvider is not ("auto" or "cuda" or "cpu"))
+            throw new ArgumentException("ONNX 推理模式无效。");
         if (settings.UiSkin is not ("follow" or "terminal" or "ursus" or "closure" or "classic" or "glass" or "round"))
             throw new ArgumentException("界面主题无效。");
         if (settings.UiScheme is not ("system" or "dark" or "light"))

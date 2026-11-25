@@ -50,13 +50,22 @@ public class OcrScannerService : IDisposable
     private bool _visibleRest;
     public void SetShopScanSpeed(string speed)
     {
+#if LINUX_PORT
+        _configuredInterval = speed == "fast" ? 110 : 400;
+#else
         _configuredInterval = speed == "fast" ? 150 : 600;
+#endif
         UpdateScanInterval(_visibleRest);
     }
     private void UpdateScanInterval(bool visibleRest)
     {
         _visibleRest = visibleRest;
+#if LINUX_PORT
+        double restCap = _configuredInterval <= 150 ? 180 : 240;
+        double interval = visibleRest ? Math.Min(_configuredInterval, restCap) : _configuredInterval;
+#else
         double interval = visibleRest ? Math.Min(_configuredInterval, 250) : _configuredInterval;
+#endif
         if (_scanTimer.Interval != interval) _scanTimer.Interval = interval;
     }
     private void SetIdleInterval(double interval)

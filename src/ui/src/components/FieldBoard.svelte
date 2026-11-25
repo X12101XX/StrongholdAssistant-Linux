@@ -105,15 +105,24 @@
 
   // ── 人：推演后的位置；推荐里有、但人不在推荐格上的，画成虚影
   let showPlan = $state(true)
-  const atCell = (c: FieldCell) => field.layout.find((x) => sameCell(x.at, c))
+  // 用 O(1) Map 代替每格 O(N) 线性扫描，消除 45 格高频重绘开销
+  const layoutByCell = $derived(new Map(field.layout.map((x) => [cellKey(x.at), x])))
+  const summonByCell = $derived(new Map((st?.summons ?? []).map((s) => [cellKey(s), s])))
+  const atCell = (c: FieldCell) => layoutByCell.get(cellKey(c))
   // 召唤物（任务 291，如鸟笼）：不是干员，画成淡色的圆，写名字第一个字；推演拖人时那格照样当有东西
-  const summonAt = (c: FieldCell) => st?.summons?.find((s) => sameCell(s, c))
+  const summonAt = (c: FieldCell) => summonByCell.get(cellKey(c))
   // 推荐：每条 move 按 from 认人；人现在（含推演）不在推荐格上的，在推荐格上画虚影
-  const placed = (m: PlacementMove) => field.layout.some((x) => sameCell(x.unit, m.from) && sameCell(x.at, m.to))
+  const placedKeys = $derived(new Set(field.layout.map((x) => `${cellKey(x.unit)}->${cellKey(x.at)}`)))
+  const placed = (m: PlacementMove) => placedKeys.has(`${cellKey(m.from)}->${cellKey(m.to)}`)
   const ghosts = $derived(showPlan && field.plan ? field.plan.moves.filter((m) => !placed(m)).map((m) => ({ ...m.to, operator: m.operator, facing: m.facing })) : [])
+  const ghostByCell = $derived(new Map(ghosts.map((g) => [cellKey(g), g])))
+  const facingByPair = $derived(
+    showPlan && field.plan
+      ? new Map(field.plan.moves.map((m) => [`${cellKey(m.from)}->${cellKey(m.to)}`, m.facing ?? null]))
+      : null,
+  )
   /** 已经站在推荐格上的人的朝向（显示小箭头） */
-  const facingOf = (u: FieldUnit, at: FieldCell) =>
-    showPlan ? (field.plan?.moves.find((m) => sameCell(m.from, u) && sameCell(m.to, at))?.facing ?? null) : null
+  const facingOf = (u: FieldUnit, at: FieldCell) => facingByPair?.get(`${cellKey(u)}->${cellKey(at)}`) ?? null
   // 推荐目标（Settings.placementGoal）：改了宿主重算；旧宿主没有这一项时按平衡
   const GOALS = [
     { id: 'leak', label: '漏怪最少', tip: '尽量一只不漏，不管叠层' },
@@ -125,17 +134,24 @@
     app.settings.placementGoal = g
     app.saveSettings()
   }
-  // 场上自动识别开关（Settings.fieldAuto，v1.0.1）：关着时场上停在上一次，只有点「识别」才认；旧宿主没有这一项时按开着
+  // 场上自动识别开关（Settings.fieldAuto）：可在棋盘顶栏一键开关，智能检测棋盘变动后自动更新
   const auto = $derived(app.settings.fieldAuto ?? true)
+  const toggleAuto = () => {
+    app.settings.fieldAuto = !auto
+    app.saveSettings()
+    app.showToast(app.settings.fieldAuto ? '已开启智能自动识别场上' : '已切换为手动识别场上')
+  }
   const busy = $derived(field.recognizing)
   const keyTip = $derived(app.settings.fieldHotkey ? `（${app.settings.fieldHotkey}）` : '')
   const hhmm = (iso: string) => new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   const moveN = $derived(field.plan ? field.plan.moves.filter((m) => !sameCell(m.from, m.to)).length : 0)
-  const ghostAt = (c: FieldCell) => ghosts.find((g) => sameCell(g, c))
+  const ghostAt = (c: FieldCell) => ghostByCell.get(cellKey(c))
 
-  // ── 拖动推演：按下后移动超过 4px 才算拖，否则是点（打开确认面板）
+  // ── 拖动推演：按下后移动超过 4px 才算拖，否则是点（打开确认面板）；使用 rAF 节流避免高频 pointermove 卡顿
   let drag = $state<{ unit: FieldUnit; x: number; y: number; moved: boolean; over: FieldCell | null } | null>(null)
   let downAt = { x: 0, y: 0 }
+  let dragRaf = 0
+  let pendingMove: { x: number; y: number } | null = null
   const cellUnder = (x: number, y: number): FieldCell | null => {
     const el = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('[data-cell]')
     if (!el) return null
@@ -150,8 +166,16 @@
   }
   function moveP(e: PointerEvent) {
     if (!drag) return
-    const moved = drag.moved || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4
-    drag = { ...drag, x: e.clientX, y: e.clientY, moved, over: moved ? cellUnder(e.clientX, e.clientY) : null }
+    pendingMove = { x: e.clientX, y: e.clientY }
+    if (dragRaf) return
+    dragRaf = requestAnimationFrame(() => {
+      dragRaf = 0
+      if (!drag || !pendingMove) return
+      const { x, y } = pendingMove
+      pendingMove = null
+      const moved = drag.moved || Math.hypot(x - downAt.x, y - downAt.y) > 4
+      drag = { ...drag, x, y, moved, over: moved ? cellUnder(x, y) : null }
+    })
   }
   // 拖动时跟着鼠标的小人挂到 body 下（v1.0.1）：内容区的入场动画（App .shell.in，fill both）一直挂着 transform，
   // 里面的 fixed 会按内容区定位，比鼠标低一截（标题栏 + 追踪栏的高度）
@@ -160,9 +184,24 @@
     document.body.appendChild(node)
     return { destroy: () => node.remove() }
   }
+  function cancelDrag() {
+    if (dragRaf) {
+      cancelAnimationFrame(dragRaf)
+      dragRaf = 0
+    }
+    pendingMove = null
+    drag = null
+  }
   function up() {
     if (!drag) return
-    const d = drag
+    if (dragRaf) {
+      cancelAnimationFrame(dragRaf)
+      dragRaf = 0
+    }
+    const d = pendingMove
+      ? { ...drag, x: pendingMove.x, y: pendingMove.y, moved: drag.moved || Math.hypot(pendingMove.x - downAt.x, pendingMove.y - downAt.y) > 4, over: drag.moved ? cellUnder(pendingMove.x, pendingMove.y) : drag.over }
+      : drag
+    pendingMove = null
     drag = null
     if (!d.moved) return pick(d.unit)
     if (d.over && placeable(b, d.over) && !summonAt(d.over)) field.move(d.unit, d.over)
@@ -302,7 +341,7 @@
       onpointerdown={(e) => down(e, x.unit)}
       onpointermove={moveP}
       onpointerup={up}
-      onpointercancel={() => (drag = null)}
+      onpointercancel={cancelDrag}
       title="{x.unit.operator ?? '不知道是谁'} · {ROMAN[x.unit.tier]} 阶 · {statusLine(x.unit)}。点一下改是谁，拖动可以推演站位"
     >
       {@render unitFace(x.unit)}
@@ -331,12 +370,18 @@
   <SectionHeader title="场上" en="FIELD" ontoggle={() => app.toggleFold('match.field')} folded={!open} tag={field.pending.length ? `${field.pending.length} 格待确认` : undefined} tagTone="warn">
     {#snippet right()}
       <button
+        class="chip"
+        class:on={auto}
+        onclick={toggleAuto}
+        title={auto ? '智能自动识别已开启：检测到棋盘变动后自动更新场上与站位推荐（点此切回手动）' : '自动识别已关闭：点此开启休整期智能自动识别'}
+      ><i></i>自动</button>
+      <button
         class="scan"
         class:manual={!auto}
         class:busy
         disabled={busy}
         onclick={() => field.recognize()}
-        title={auto ? `现在认一次场上，重算推荐${keyTip}` : `点一下认一次场上，算一次推荐${keyTip}`}
+        title={auto ? `立即重新识别一次场上并重算推荐${keyTip}` : `点一下认一次场上，算一次推荐${keyTip}`}
       ><Icon name="scan" size={13} />{busy ? '识别中' : '识别'}</button>
       {#if b}
         <button class="chip" class:on={showRoutes} onclick={() => (showRoutes = !showRoutes)} title="在小棋盘上画本回合敌人路线（和游戏里的路线覆盖分开）"><i></i>路线</button>
@@ -346,13 +391,13 @@
   {#if open}
     <div class="fb" transition:slide={sl}>
       {#if !st && !b}
-        <p class="empty">{auto ? '进休整期后自动认出场上和整备区的人，显示在这块小棋盘上。' : `休整期在棋盘画面点右上角「识别」${app.settings.fieldHotkey ? `或按 ${app.settings.fieldHotkey}` : ''}，认一次场上和整备区的人。`}</p>
+        <p class="empty">{auto ? '进休整期后自动监测棋盘变化并识别干员，无需手动点击。' : `休整期在棋盘画面点右上角「识别」${app.settings.fieldHotkey ? `或按 ${app.settings.fieldHotkey}` : ''}，或点亮「自动」开启实时识别。`}</p>
       {:else}
         <!-- 顶栏：回合、视图切换、推演状态 -->
         <div class="bar">
           <span class="meta">
             {#if b?.round}第 {b.round} 回合{#if b.bossRound} · 首领{/if}{/if}
-            {#if !auto && st}<small class="man" title="场上停在这次识别的结果，摆好人后再点「识别」更新">手动 · {hhmm(st.updatedAt)}</small>{/if}
+            {#if st}<small class="man" title={auto ? '已开启智能自动识别，棋盘变化时自动同步' : '场上停在这次识别的结果，摆好人后再点「识别」更新'}>{auto ? '自动' : '手动'} · {hhmm(st.updatedAt)}</small>{/if}
             {#if showRoutes && (walkN || flyN)}<small><i class="lg walk"></i>地面 {walkN}<i class="lg fly"></i>飞行 {flyN}</small>{/if}
           </span>
           {#if canBoth}
@@ -578,7 +623,7 @@
               按这些假设算的：{field.plan.assumptions.join('；')}。结果是近似推荐，漏 0 只也不等于一定守住。
             </p>
           {:else}
-            <b>站位推荐</b><span>{field.planPending ? '正在算，算好会显示在这块棋盘上…' : '休整时点「识别」，会在这块棋盘上给出推荐站位'}</span>
+            <b>站位推荐</b><span>{field.planPending ? '正在算，算好会显示在这块棋盘上…' : auto ? '休整期会自动识别场上并给出推荐站位，也可点「识别」立即刷新' : '休整时点「识别」，会在这块棋盘上给出推荐站位'}</span>
           {/if}
         </div>
 

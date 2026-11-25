@@ -82,7 +82,10 @@ export class AppState {
   banPicker = $state<string | boolean | { cov: string; slot: number }>(false)
   scanning = $state(false)
   settings = $state<Settings>(settings)
-  appInfo: AppInfo = appInfo
+  appInfo = $state<AppInfo>(appInfo)
+  async refreshAppInfo() {
+    this.appInfo = await api.appInfo()
+  }
   /** 现在按哪套游戏主题算（v0.9.2）：自动识别时用宿主认到的，还没认出来就用上次认到 / 手动选的 */
   get gameTheme() {
     return (this.settings.gameThemeAuto && this.connection.theme) || this.settings.gameTheme

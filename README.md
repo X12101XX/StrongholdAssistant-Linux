@@ -1,6 +1,8 @@
 > [!IMPORTANT]
 > **StrongholdAssistant-Linux** 是面向 Linux（Wayland / niri / Lutris / Proton）的原生移植与优化分支。
 > 本分支已同步至原版 `v1.3.9`；为保证 Linux 原生兼容性与架构演进，自 `v1.3.9` 起不再追踪上游 Windows 仓库的更新，由本仓库独立维护（请从 [X12101XX/StrongholdAssistant-Linux Releases](https://github.com/X12101XX/StrongholdAssistant-Linux/releases) 获取 Linux 构建包）。
+>
+> **ONNX CUDA 加速（NVIDIA GPU）**：在设置 →「ONNX 推理加速」支持 `自动 / CUDA / CPU` 切换（自动模式默认优先 CUDA，缺库时自动回落多线程 CPU）。Arch Linux 安装 `sudo pacman -S onnxruntime-opt-cuda cudnn` 后重启即可开启 GPU 加速（也可通过 `STRONGHOLD_ORT_LIB` 指向自定义 CUDA 版 `libonnxruntime.so`）。
 
 <a href="https://github.com/X12101XX/StrongholdAssistant-Linux/releases/latest"><img src=".github/readme/hero.jpg" alt="高效雅雅·卫戍协议助手 GXYY · Stronghold Assistant：《明日方舟》卫戍协议 PC 辅助侧栏" width="100%"></a>
 

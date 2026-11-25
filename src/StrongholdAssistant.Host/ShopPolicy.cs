@@ -231,17 +231,62 @@ internal sealed class ShopPolicy : IDisposable
 {
     internal const string ModelId = "garrison-sp3-v0.1-06d6bf9";
     internal ShopEncoder Encoder { get; }
-    private readonly InferenceSession _session;
+    private readonly string _modelPath;
+    private readonly object _sessionGate = new();
+    private InferenceSession _session;
     public ShopPolicy(string directory)
     {
         Encoder = new(directory);
-        using var options = new SessionOptions { IntraOpNumThreads = 1, InterOpNumThreads = 1 };
-        _session = new(Path.Combine(directory, "sp3.onnx"), options);
+        _modelPath = Path.Combine(directory, "sp3.onnx");
+        _session = CreateSession(_modelPath);
     }
+
+    private static InferenceSession CreateSession(string modelPath)
+    {
+#if LINUX_PORT
+        int cpuThreads = Math.Clamp(Environment.ProcessorCount / 2, 2, 4);
+        using var options = ASPAssistant.Core.Services.OnnxRuntimeConfig.CreateSessionOptions("shopPolicy", cpuThreads, out var usingCuda, out _);
+        try
+        {
+            return new InferenceSession(modelPath, options);
+        }
+        catch (Exception ex) when (usingCuda)
+        {
+            ASPAssistant.Core.AppLogger.Warn("ONNX", $"[shopPolicy] CUDA 会话创建失败，回落 CPU: {ex.GetBaseException().Message}");
+            using var fallback = new SessionOptions
+            {
+                IntraOpNumThreads = cpuThreads,
+                InterOpNumThreads = 1,
+                GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL
+            };
+            ASPAssistant.Core.Services.OnnxRuntimeConfig.ReportConsumer("shopPolicy", "CPU");
+            return new InferenceSession(modelPath, fallback);
+        }
+#else
+        using var options = new SessionOptions { IntraOpNumThreads = 1, InterOpNumThreads = 1 };
+        return new(modelPath, options);
+#endif
+    }
+
+    public void ReloadProvider()
+    {
+#if LINUX_PORT
+        lock (_sessionGate)
+        {
+            var old = _session;
+            _session = CreateSession(_modelPath);
+            old.Dispose();
+        }
+#endif
+    }
+
     internal float[] Logits(ShopObservation o)
     {
-        using var result = _session.Run(o.Inputs);
-        return result.First().AsTensor<float>().ToArray();
+        lock (_sessionGate)
+        {
+            using var result = _session.Run(o.Inputs);
+            return result.First().AsTensor<float>().ToArray();
+        }
     }
     public ShopAdvice Predict(long revision, MatchState state, ShopContext context)
     {

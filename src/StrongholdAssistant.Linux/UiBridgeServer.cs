@@ -24,6 +24,12 @@ internal sealed class UiBridgeServer : IDisposable
     private readonly Func<string, Task<string>> _handleMessage;
     private readonly CancellationTokenSource _stop = new();
     private readonly ConcurrentDictionary<Guid, WebSocketClient> _clients = new();
+    private readonly ConcurrentDictionary<string, string> _lastStatefulJson = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, (byte[] Bytes, string ContentType, string ETag, bool Immutable)> _staticCache = new(StringComparer.Ordinal);
+    private static readonly HashSet<string> DeduplicatedEvents = new(StringComparer.Ordinal)
+    {
+        "match", "field", "boardView", "placement", "connection", "shopAdvice"
+    };
 
     public int Port { get; }
     public string Url => $"http://127.0.0.1:{Port}/";
@@ -117,6 +123,12 @@ internal sealed class UiBridgeServer : IDisposable
     public void BroadcastEvent(string eventName, object? data)
     {
         var json = JsonSerializer.Serialize(new { @event = eventName, data }, HostApi.JsonOptions);
+        if (DeduplicatedEvents.Contains(eventName))
+        {
+            if (_lastStatefulJson.TryGetValue(eventName, out var prev) && string.Equals(prev, json, StringComparison.Ordinal))
+                return;
+            _lastStatefulJson[eventName] = json;
+        }
         BroadcastRaw(json);
     }
 
@@ -309,10 +321,33 @@ internal sealed class UiBridgeServer : IDisposable
                 return;
             }
 
-            ctx.Response.ContentType = GetContentType(fullPath);
-            ctx.Response.Headers["Cache-Control"] = "no-cache";
+            bool isIndex = Path.GetFileName(fullPath).Equals("index.html", StringComparison.OrdinalIgnoreCase) && baseDir == _uiRoot;
+            bool immutable = !isIndex && baseDir == _uiRoot && IsCacheableAsset(fullPath);
 
-            if (Path.GetFileName(fullPath).Equals("index.html", StringComparison.OrdinalIgnoreCase) && baseDir == _uiRoot)
+            if (immutable && _staticCache.TryGetValue(fullPath, out var cached))
+            {
+                if (string.Equals(ctx.Request.Headers["If-None-Match"], cached.ETag, StringComparison.Ordinal))
+                {
+                    ctx.Response.StatusCode = 304;
+                    ctx.Response.Headers["Cache-Control"] = "public, max-age=86400, immutable";
+                    ctx.Response.Headers["ETag"] = cached.ETag;
+                    ctx.Response.Close();
+                    return;
+                }
+                ctx.Response.ContentType = cached.ContentType;
+                ctx.Response.Headers["Cache-Control"] = "public, max-age=86400, immutable";
+                ctx.Response.Headers["ETag"] = cached.ETag;
+                ctx.Response.ContentLength64 = cached.Bytes.Length;
+                await ctx.Response.OutputStream.WriteAsync(cached.Bytes, ct).ConfigureAwait(false);
+                ctx.Response.OutputStream.Close();
+                return;
+            }
+
+            var contentType = GetContentType(fullPath);
+            ctx.Response.ContentType = contentType;
+            ctx.Response.Headers["Cache-Control"] = immutable ? "public, max-age=86400, immutable" : "no-cache";
+
+            if (isIndex)
             {
                 var html = await File.ReadAllTextAsync(fullPath, Encoding.UTF8, ct).ConfigureAwait(false);
                 int idx = html.IndexOf("<head>", StringComparison.OrdinalIgnoreCase);
@@ -326,6 +361,15 @@ internal sealed class UiBridgeServer : IDisposable
             else
             {
                 var bytes = await File.ReadAllBytesAsync(fullPath, ct).ConfigureAwait(false);
+                if (immutable)
+                {
+                    var fi = new FileInfo(fullPath);
+                    var etag = $"\"{fi.Length:x}-{fi.LastWriteTimeUtc.Ticks:x}\"";
+                    ctx.Response.Headers["ETag"] = etag;
+                    // Cache static UI icons/scripts/fonts in memory to avoid repetitive localhost disk I/O.
+                    if (_staticCache.Count < 1024 && bytes.Length <= 4 * 1024 * 1024)
+                        _staticCache[fullPath] = (bytes, contentType, etag, true);
+                }
                 ctx.Response.ContentLength64 = bytes.Length;
                 await ctx.Response.OutputStream.WriteAsync(bytes, ct).ConfigureAwait(false);
             }
@@ -336,6 +380,12 @@ internal sealed class UiBridgeServer : IDisposable
             try { ctx.Response.StatusCode = 500; ctx.Response.Close(); } catch { }
         }
     }
+
+    private static bool IsCacheableAsset(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".js" or ".mjs" or ".css" or ".svg" or ".png" or ".jpg" or ".jpeg" or ".webp" or ".woff2" or ".woff" or ".ttf" => true,
+        _ => false
+    };
 
     private static string GetContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
     {

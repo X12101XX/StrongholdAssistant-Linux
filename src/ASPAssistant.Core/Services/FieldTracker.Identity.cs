@@ -376,16 +376,60 @@ public sealed partial class FieldTracker
             inputs.Add((patch, unit.Tier, names, sources, personal));
         }
         if (inputs.Count < 2 && !force) return;
+        // Batch ONNX inference across the whole row in one forward pass (huge speedup on CUDA and multi-core CPU).
+        var batchLogits = new float[]?[inputs.Count];
+        if (_spriteModel is not null && inputs.Count >= 2)
+        {
+            var cropIndices = new List<int>(inputs.Count);
+            var crops = new List<OpenCvSharp.Mat>(inputs.Count);
+            try
+            {
+                for (int i = 0; i < inputs.Count; i++)
+                {
+                    var p = inputs[i];
+                    if (p.Names.Concat(p.Sources).Any(n => n is "Pith" or PithIdentity.Gift || _usesPrototype?.Invoke(n) == true))
+                        continue;
+                    crops.Add(PrepareModelCrop(p.Patch, p.Tier, p.Names, p.Sources));
+                    cropIndices.Add(i);
+                }
+                if (crops.Count > 0)
+                {
+                    var predicted = _spriteModel.PredictBatch(crops);
+                    for (int j = 0; j < cropIndices.Count; j++)
+                        batchLogits[cropIndices[j]] = predicted[j];
+                }
+            }
+            finally
+            {
+                foreach (var c in crops) c.Dispose();
+            }
+        }
         var results = new PreparedRank[inputs.Count];
         Parallel.For(0, inputs.Count, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, i =>
         {
             var p = inputs[i];
-            results[i] = new(p.Patch, p.Names, p.Sources, p.Personal, ComputeRank(p.Patch, p.Tier, p.Names, p.Sources, p.Personal));
+            results[i] = new(p.Patch, p.Names, p.Sources, p.Personal, ComputeRank(p.Patch, p.Tier, p.Names, p.Sources, p.Personal, batchLogits[i]));
         });
         foreach (var result in results) if (result is not null) _preparedRanks[result.Patch.Image] = result;
     }
 
-    private RankResult ComputeRank(FieldSpritePatch patch, int tier, string[] names, string[] sourceNames, Dictionary<string, double> personal)
+    private OpenCvSharp.Mat PrepareModelCrop(FieldSpritePatch patch, int tier, string[] names, string[] sourceNames)
+    {
+        var modelPatch = _modelRegion?.Invoke(patch, tier, names.Concat(sourceNames).Distinct().ToArray()) ?? patch;
+        var crop = OpenCvSharp.Cv2.ImDecode(patch.Image, OpenCvSharp.ImreadModes.Color);
+        if (modelPatch.OcclusionMask is { } maskBytes)
+        {
+            using var mask = OpenCvSharp.Cv2.ImDecode(maskBytes, OpenCvSharp.ImreadModes.Grayscale);
+            using var blocked = new OpenCvSharp.Mat(mask, new OpenCvSharp.Rect(
+                patch.TemplateRegion?.OffsetX ?? 0, patch.TemplateRegion?.OffsetY ?? 0, crop.Width, crop.Height));
+            using var visible = new OpenCvSharp.Mat();
+            OpenCvSharp.Cv2.BitwiseNot(blocked, visible);
+            crop.SetTo(OpenCvSharp.Cv2.Mean(crop, visible), blocked);
+        }
+        return crop;
+    }
+
+    private RankResult ComputeRank(FieldSpritePatch patch, int tier, string[] names, string[] sourceNames, Dictionary<string, double> personal, float[]? precomputedLogits = null)
     {
         // 模型的旧 Pith 类属于原型，且没有优等生训练类；和已知原型一样只用模板，避免误筛或索引不存在的类。
         if (names.Concat(sourceNames).Any(n => n is "Pith" or PithIdentity.Gift || _usesPrototype?.Invoke(n) == true))
@@ -393,21 +437,14 @@ public sealed partial class FieldTracker
             var rank = _matchSprite!(patch, tier, names.Concat(sourceNames).Distinct().ToArray()).Candidates.ToArray();
             return new(rank, rank, null);
         }
-        float[]? logits = null;
+        float[]? logits = precomputedLogits;
         if (_spriteModel is not null)
         {
-            var modelPatch = _modelRegion?.Invoke(patch, tier, names.Concat(sourceNames).Distinct().ToArray()) ?? patch;
-            using var crop = OpenCvSharp.Cv2.ImDecode(patch.Image, OpenCvSharp.ImreadModes.Color);
-            if (modelPatch.OcclusionMask is { } maskBytes)
+            if (logits is null)
             {
-                using var mask = OpenCvSharp.Cv2.ImDecode(maskBytes, OpenCvSharp.ImreadModes.Grayscale);
-                using var blocked = new OpenCvSharp.Mat(mask, new OpenCvSharp.Rect(
-                    patch.TemplateRegion?.OffsetX ?? 0, patch.TemplateRegion?.OffsetY ?? 0, crop.Width, crop.Height));
-                using var visible = new OpenCvSharp.Mat();
-                OpenCvSharp.Cv2.BitwiseNot(blocked, visible);
-                crop.SetTo(OpenCvSharp.Cv2.Mean(crop, visible), blocked);
+                using var crop = PrepareModelCrop(patch, tier, names, sourceNames);
+                logits = _spriteModel.Predict(crop);
             }
-            logits = _spriteModel.Predict(crop);
             if (names.Length > 1 && patch.OcclusionRatio < .2)
             {
                 var quick = _spriteModel.TemplateCandidates(logits, names, 1);

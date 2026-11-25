@@ -29,6 +29,8 @@ public sealed partial class FieldReader : IDisposable
     private string? _lastMap;
     private Dictionary<int, ShopItem> _shopCards = new();
     private (int, int, bool)? _frameKey;
+    private (int? Round, string? MapId, int Width, int Height, bool Expanded, string? PlayerSide, bool BossRound,
+        double BadgeScale, (double Scale, double X, double Y) Fit, int UnitCount)? _cameraFitCache;
     public GameShopTheme Theme { get; set; }
     public FieldOverlayGeometry? OverlayGeometry { get; private set; }
 
@@ -81,13 +83,20 @@ public sealed partial class FieldReader : IDisposable
         }
     }
 
+    public void ReloadOnnxProvider()
+    {
+#if LINUX_PORT
+        if (_occupancyModel.IsValueCreated) _occupancyModel.Value.ReloadProvider();
+#endif
+    }
+
     public void Dispose()
     {
         if (_occupancyModel.IsValueCreated) _occupancyModel.Value.Dispose();
         _summonMatcher?.Dispose();
         _summonOperatorMatcher?.Dispose();
     }
-    public void Reset() { _boards.Clear(); _round = null; _lastMap = null; KnownMap = null; _shopCards.Clear(); Summons = []; _summonCellCache.Clear(); }
+    public void Reset() { _boards.Clear(); _round = null; _lastMap = null; KnownMap = null; _shopCards.Clear(); Summons = []; _summonCellCache.Clear(); _cameraFitCache = null; }
 
     // 就绪控件可能露在外部窗口旁；棋盘中大面积连续的中性纯色不是地形纹理。
     internal static (bool Obscured, bool Detail, bool ConfirmationCandidate) InspectSurface(byte[] frame)
@@ -135,7 +144,7 @@ public sealed partial class FieldReader : IDisposable
         OverlayGeometry = null;
         _frameGeometry = null;
         if (economy is not { IsRest: true }) return new(at, false, null, economy?.Round, new Dictionary<FieldCell, int>());
-        if (_round != economy.Round) { _boards.Clear(); _summonCellCache.Clear(); _round = economy.Round; }
+        if (_round != economy.Round) { _boards.Clear(); _summonCellCache.Clear(); _cameraFitCache = null; _round = economy.Round; }
         using var stream = new MemoryStream(frame);
         using var bitmap = new Bitmap(stream);
         double scale = Math.Min(bitmap.Width / 1920d, bitmap.Height / 1080d);
@@ -173,7 +182,7 @@ public sealed partial class FieldReader : IDisposable
         using var normalizedBitmap = boardStream is null ? null : new Bitmap(boardStream);
         var boardBitmap = normalizedBitmap ?? bitmap;
         var key = (bitmap.Width, bitmap.Height, shopVisible);
-        if (_frameKey != key) { _boards.Clear(); _summonCellCache.Clear(); _frameKey = key; }
+        if (_frameKey != key) { _boards.Clear(); _summonCellCache.Clear(); _cameraFitCache = null; _frameKey = key; }
         KnownMap = _lastMap ?? KnownMap;
         _boards.TryGetValue(key, out var board);
         BoardMatch? cameraOnly = null;
@@ -344,71 +353,136 @@ public sealed partial class FieldReader : IDisposable
         using var resized = bitmap.Width == 1920 && bitmap.Height == 1080 ? null : new Bitmap(bitmap, 1920, 1080);
         var cameraFrame = resized ?? bitmap;
         var bodyPixels = resized is null ? px : new Pixels(cameraFrame);
-        var landmarks = ReadBadges(bodyPixels, cameraFrame.Width, cameraFrame.Height);
-        double badgeScale = BadgeScale(cameraFrame, landmarks, zoom);
-        var topVisible = anchors.Where(a => a.Key.Zone == "board" && a.Key.Row == 0 && a.Value.Y >= 150 * height / 1080)
-            .Select(a => a.Key).ToHashSet();
-        foreach (var (cell, p) in anchors)
-            anchors[cell] = (p.X - 35 * (badgeScale - 1) * width / 1920,
-                p.Y - (cell.Zone == "bench" ? 132 : 112) * (badgeScale - 1) * height / 1080);
-        var fit = FitFieldCamera(bitmap, landmarks, anchors);
-        if (fit != (1d, 0d, 0d))
+        bool usedCameraCache = false;
+        int cachedUnitCount = 0;
+        double badgeScale;
+        (double Scale, double X, double Y) fit;
+        var baseAnchors = anchors.ToDictionary(p => p.Key, p => p.Value);
+        var baseGeometry = _cellGeometry.ToDictionary(p => p.Key, p => p.Value);
+        var baseProjection = projection;
+        if (_cameraFitCache is { } cached
+            && cached.Round == _round
+            && cached.MapId == mapId
+            && cached.Width == bitmap.Width
+            && cached.Height == bitmap.Height
+            && cached.Expanded == expanded
+            && cached.PlayerSide == camera?.PlayerSide
+            && cached.BossRound == BossRound)
         {
-            (double X, double Y) Transform(double x, double y) =>
-                ((x - .5) * fit.Scale + .5 + fit.X, (y - .5) * fit.Scale + .5 + fit.Y);
-            projection = new BoardProjection(new[] { (0d, 0d), (7d, 0d), (7d, 5d), (0d, 5d) }.Select(c =>
+            badgeScale = cached.BadgeScale;
+            fit = cached.Fit;
+            cachedUnitCount = cached.UnitCount;
+            usedCameraCache = true;
+        }
+        else
+        {
+            var landmarks = ReadBadges(bodyPixels, cameraFrame.Width, cameraFrame.Height);
+            badgeScale = BadgeScale(cameraFrame, landmarks, zoom);
+            var scaledAnchors = anchors.ToDictionary(
+                p => p.Key,
+                p => (p.Value.X - 35 * (badgeScale - 1) * width / 1920,
+                      p.Value.Y - (p.Key.Zone == "bench" ? 132 : 112) * (badgeScale - 1) * height / 1080));
+            fit = FitFieldCamera(bitmap, landmarks, scaledAnchors);
+            if (landmarks.Count >= 2)
+                _cameraFitCache = (_round, mapId, bitmap.Width, bitmap.Height, expanded, camera?.PlayerSide, BossRound, badgeScale, fit, landmarks.Count);
+        }
+        void ApplyCameraFit(double scaleVal, (double Scale, double X, double Y) fitVal)
+        {
+            projection = baseProjection;
+            anchors.Clear();
+            foreach (var (cell, p) in baseAnchors)
+                anchors[cell] = (p.X - 35 * (scaleVal - 1) * width / 1920,
+                    p.Y - (cell.Zone == "bench" ? 132 : 112) * (scaleVal - 1) * height / 1080);
+            _cellGeometry.Clear();
+            foreach (var (cell, g) in baseGeometry) _cellGeometry[cell] = g;
+            if (fitVal != (1d, 0d, 0d))
             {
-                var p = projection.Project(c.Item1, c.Item2);
-                return (c, Transform(p.X, p.Y));
-            }).ToArray());
-            foreach (var (cell, anchor) in anchors)
-            {
-                var p = Transform(anchor.X / width, anchor.Y / height);
-                anchors[cell] = (p.X * width, p.Y * height);
-                var geometry = _cellGeometry[cell];
-                var foot = Transform(geometry.FootX / 1920, geometry.FootY / 1080);
-                _cellGeometry[cell] = geometry with { FootX = foot.X * 1920, FootY = foot.Y * 1080,
-                    CellWidth = geometry.CellWidth * fit.Scale };
+                (double X, double Y) Transform(double x, double y) =>
+                    ((x - .5) * fitVal.Scale + .5 + fitVal.X, (y - .5) * fitVal.Scale + .5 + fitVal.Y);
+                projection = new BoardProjection(new[] { (0d, 0d), (7d, 0d), (7d, 5d), (0d, 5d) }.Select(c =>
+                {
+                    var p = projection.Project(c.Item1, c.Item2);
+                    return (c, Transform(p.X, p.Y));
+                }).ToArray());
+                foreach (var (cell, anchor) in anchors.ToArray())
+                {
+                    var p = Transform(anchor.X / width, anchor.Y / height);
+                    anchors[cell] = (p.X * width, p.Y * height);
+                    var geometry = _cellGeometry[cell];
+                    var foot = Transform(geometry.FootX / 1920, geometry.FootY / 1080);
+                    _cellGeometry[cell] = geometry with { FootX = foot.X * 1920, FootY = foot.Y * 1080,
+                        CellWidth = geometry.CellWidth * fitVal.Scale };
+                }
             }
         }
-        _frameGeometry = new(expanded ? BoardCamera.Expanded : BoardCamera.Collapsed,
-            camera?.PlayerSide, BossRound, board is not null,
-            new[] { (0d, 0d), (7d, 0d), (7d, 5d), (0d, 5d) }.Select(c =>
-            { var p = projection.Project(c.Item1, c.Item2); return new FieldScreenPoint(p.X * 1920, p.Y * 1080); }).ToArray(),
-            _cellGeometry.Where(p => p.Key.Zone == "bench").ToDictionary(p => p.Key, p => new FieldScreenPoint(p.Value.FootX, p.Value.FootY)));
-        foreach (var (cell, p) in anchors)
-        {
-            // 商店和屏幕外格子没有观测，保留追踪器中的旧值。
-            // 展开镜头的首排角标可能位于盟约栏下沿，实际可见部分由 ReadBadge 检查（342）；按可见角标校正过的首排格不受上界限制（341）。
-            double minY = expanded && cell is { Zone: "board", Row: 0 } ? 140 : 150;
-            if (p.X < 20 || p.X > width - 55 || (p.Y < minY * height / 1080 && !topVisible.Contains(cell)) || p.Y + 55 > height * (shopVisible ? .72 : .94)) continue;
-            cells[cell] = 0;
-        }
+        var topVisible = baseAnchors.Where(a => a.Key.Zone == "board" && a.Key.Row == 0 && a.Value.Y >= 150 * height / 1080)
+            .Select(a => a.Key).ToHashSet();
+        ApplyCameraFit(badgeScale, fit);
         using var ownedSpriteImage = existingSpriteImage is null ? NormalizeSpriteImage(bitmap) : null;
         var spriteImage = existingSpriteImage ?? ownedSpriteImage!;
         var matchedBadges = new Dictionary<FieldCell, FieldBadge>();
-        foreach (var cell in cells.Keys.ToArray())
+
+        void ScanCellsWithCurrentCamera()
         {
-            var p = anchors[cell];
-            var badge = ReadBadge(px, bitmap.Width, bitmap.Height, p.X, p.Y, cell.Zone == "board");
-            // 首排被盟约栏遮住时，用可见的身体缩小阶数候选，再回到原图验证角标。
-            if (badge is null && cell is { Zone: "board", Row: 0 } && p.Y < 180 * width / 1920)
-                badge = ReadCovenantBadge(px, spriteImage, bitmap.Width, bitmap.Height, p.X, p.Y, badgeScale);
-            if (badge is null) continue;
-            double badgeX = badge.X * 1920 / width, badgeY = badge.Y * 1080 / height;
-            // 大角标相对人物向左上延伸；整备区多出的 20 像素来自落脚点标定。
-            var foot = (badgeX + 35 * badgeScale,
-                badgeY + 112 * badgeScale + (cell.Zone == "bench" ? 20 : 0));
-            _summonFeet[cell] = foot;
-            if (badge.X + 90 * width / 1920 < width && badge.Y + 150 * width / 1920 < height && (cell.Zone == "bench" ? HasSummonCount(px, badge, width / 1920)
-                : HasSummonTriangle(px, badge, width / 1920))) { _summonHints.Add(cell); continue; }
-            // 全片仍有无法凭令牌分类的过渡/遮挡候选，保留原人体证据门槛。
-            var bodyOrigin = badge with { X = badgeX + 35 * (badgeScale - 1), Y = badgeY + 112 * (badgeScale - 1) };
-            if (!HasUnitEvidence(bodyPixels, bodyOrigin, 1920, 1080, cell.Zone == "board")
-                && !HasModelBodyEvidence(spriteImage, cell, badge)) continue;
-            cells[cell] = badge.Tier;
-            _spriteFeet[cell] = foot;
-            matchedBadges[cell] = badge with { X = badge.X / width, Y = badge.Y / height, Size = badge.Size / height };
+            cells.Clear();
+            _spriteFeet.Clear();
+            _summonFeet.Clear();
+            _summonHints.Clear();
+            matchedBadges.Clear();
+            _frameGeometry = new(expanded ? BoardCamera.Expanded : BoardCamera.Collapsed,
+                camera?.PlayerSide, BossRound, board is not null,
+                new[] { (0d, 0d), (7d, 0d), (7d, 5d), (0d, 5d) }.Select(c =>
+                { var p = projection.Project(c.Item1, c.Item2); return new FieldScreenPoint(p.X * 1920, p.Y * 1080); }).ToArray(),
+                _cellGeometry.Where(p => p.Key.Zone == "bench").ToDictionary(p => p.Key, p => new FieldScreenPoint(p.Value.FootX, p.Value.FootY)));
+            foreach (var (cell, p) in anchors)
+            {
+                // 商店和屏幕外格子没有观测，保留追踪器中的旧值。
+                // 展开镜头的首排角标可能位于盟约栏下沿，实际可见部分由 ReadBadge 检查（342）；按可见角标校正过的首排格不受上界限制（341）。
+                double minY = expanded && cell is { Zone: "board", Row: 0 } ? 140 : 150;
+                if (p.X < 20 || p.X > width - 55 || (p.Y < minY * height / 1080 && !topVisible.Contains(cell)) || p.Y + 55 > height * (shopVisible ? .72 : .94)) continue;
+                cells[cell] = 0;
+            }
+            foreach (var cell in cells.Keys.ToArray())
+            {
+                var p = anchors[cell];
+                var badge = ReadBadge(px, bitmap.Width, bitmap.Height, p.X, p.Y, cell.Zone == "board");
+                // 首排被盟约栏遮住时，用可见的身体缩小阶数候选，再回到原图验证角标。
+                if (badge is null && cell is { Zone: "board", Row: 0 } && p.Y < 180 * width / 1920)
+                    badge = ReadCovenantBadge(px, spriteImage, bitmap.Width, bitmap.Height, p.X, p.Y, badgeScale);
+                if (badge is null) continue;
+                double badgeX = badge.X * 1920 / width, badgeY = badge.Y * 1080 / height;
+                // 大角标相对人物向左上延伸；整备区多出的 20 像素来自落脚点标定。
+                var foot = (badgeX + 35 * badgeScale,
+                    badgeY + 112 * badgeScale + (cell.Zone == "bench" ? 20 : 0));
+                _summonFeet[cell] = foot;
+                if (badge.X + 90 * width / 1920 < width && badge.Y + 150 * width / 1920 < height && (cell.Zone == "bench" ? HasSummonCount(px, badge, width / 1920)
+                    : HasSummonTriangle(px, badge, width / 1920))) { _summonHints.Add(cell); continue; }
+                // 全片仍有无法凭令牌分类的过渡/遮挡候选，保留原人体证据门槛。
+                var bodyOrigin = badge with { X = badgeX + 35 * (badgeScale - 1), Y = badgeY + 112 * (badgeScale - 1) };
+                if (!HasUnitEvidence(bodyPixels, bodyOrigin, 1920, 1080, cell.Zone == "board")
+                    && !HasModelBodyEvidence(spriteImage, cell, badge)) continue;
+                cells[cell] = badge.Tier;
+                _spriteFeet[cell] = foot;
+                matchedBadges[cell] = badge with { X = badge.X / width, Y = badge.Y / height, Size = badge.Size / height };
+            }
+        }
+
+        ScanCellsWithCurrentCamera();
+        // Self-heal: if cached camera suddenly sees 0 units when previously >=2 existed, re-fit full landmarks once.
+        if (usedCameraCache && matchedBadges.Count == 0 && cachedUnitCount >= 2)
+        {
+            _cameraFitCache = null;
+            var landmarks = ReadBadges(bodyPixels, cameraFrame.Width, cameraFrame.Height);
+            badgeScale = BadgeScale(cameraFrame, landmarks, zoom);
+            var scaledAnchors = baseAnchors.ToDictionary(
+                p => p.Key,
+                p => (p.Value.X - 35 * (badgeScale - 1) * width / 1920,
+                      p.Value.Y - (p.Key.Zone == "bench" ? 132 : 112) * (badgeScale - 1) * height / 1080));
+            fit = FitFieldCamera(bitmap, landmarks, scaledAnchors);
+            ApplyCameraFit(badgeScale, fit);
+            ScanCellsWithCurrentCamera();
+            if (landmarks.Count >= 2)
+                _cameraFitCache = (_round, mapId, bitmap.Width, bitmap.Height, expanded, camera?.PlayerSide, BossRound, badgeScale, fit, matchedBadges.Count);
         }
         foreach (var (cell, p) in anchors)
         {

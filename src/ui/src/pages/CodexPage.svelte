@@ -149,7 +149,7 @@
     </div>
   </div>
   {#key kind}
-  <div in:fly={{ x: 24 * dir, duration: 220, easing: cubicOut }}>
+  <div in:fly={{ x: 10 * dir, duration: 90, easing: cubicOut }}>
   {#if kind === 'strategy'}
     <!-- 仿游戏「策略报告」：上面详情（默认本局策略），下面按泛用型 / 盟约型分组排头像 -->
     <div class="strats" style:--sticky-top="{topH}px"><StrategyGrid {q} current={app.match.strategyId} /></div>
@@ -646,6 +646,15 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
     gap: 6px;
+    contain: layout style;
+  }
+  .grid > :global(*) {
+    content-visibility: auto;
+    contain-intrinsic-size: 86px 116px;
+  }
+  .brow {
+    content-visibility: auto;
+    contain-intrinsic-size: 320px 52px;
   }
   .eq {
     position: relative;

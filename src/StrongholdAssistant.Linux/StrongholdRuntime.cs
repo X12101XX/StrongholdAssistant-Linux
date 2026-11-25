@@ -512,7 +512,11 @@ internal sealed class StrongholdRuntime : IDisposable
         {
             var request = JsonSerializer.Deserialize<BridgeRequest>(rawJson, HostApi.JsonOptions)!;
             id = request.Id;
-            if (request.Method is not ("rescan" or "startRosterScan" or "stopRosterScan" or "plazaLogin" or "sklandGuide" or "sklandHistory" or "sklandLogin"))
+            if (request.Method is not (
+                "rescan" or "startRosterScan" or "stopRosterScan" or "plazaLogin" or "sklandGuide" or "sklandHistory" or "sklandLogin"
+                or "catalog" or "settings" or "match" or "field" or "board" or "placement" or "connection" or "appInfo"
+                or "lineups" or "session" or "roster" or "listFonts" or "currentProfile" or "listProfiles" or "collections"
+                or "history" or "controlState" or "roundEnemyOptions" or "windowCommand" or "resizeWindow" or "logUiError"))
             {
                 await _requests.WaitAsync();
                 locked = true;

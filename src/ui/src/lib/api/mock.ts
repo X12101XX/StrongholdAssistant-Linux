@@ -288,7 +288,8 @@ let settings: Settings = {
   uiAccent: new URLSearchParams(location.search).get('accent') ?? '', // ?accent=%2322c55e
   shopMarkers: true,
   shopAdvice: location.search.includes('advice'),
-  shopScanSpeed: 'normal',
+  shopScanSpeed: 'fast',
+  onnxProvider: 'auto',
   routes: { enabled: false, display: 'always', peekSeconds: 6, hotkey: 'Alt+R', overlap: 'cycle', cycleSeconds: 2.2, fly: 'main', side: 'auto' },
   overlayLayers: { placement: true, pending: true, upgrade: true },
   placementGoal: 'balanced',

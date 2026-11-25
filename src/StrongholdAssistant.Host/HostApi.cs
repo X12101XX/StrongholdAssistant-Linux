@@ -148,6 +148,9 @@ public sealed partial class HostApi
         api._modes = extra["modes"]!.Deserialize<GameModeInfo[]>(JsonOptions)!;
         api.SettingsStore = new HostSettingsStore(Path.Combine(userDirectory, "settings.json"));
         api.Settings = api.SettingsStore.LoadSettings();
+#if LINUX_PORT
+        ASPAssistant.Core.Services.OnnxRuntimeConfig.Configure(api.Settings.OnnxProvider);
+#endif
         api.InitializeCollections(dataDirectory);
         api._boardRouteStore = new BoardRouteStore(dataDirectory);
         api.Changed += (name, _) => { if (name is "field" or "match") api.PublishBoardView(); };
