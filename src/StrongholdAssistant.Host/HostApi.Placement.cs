@@ -52,6 +52,11 @@ public sealed partial class HostApi
 
     private void SchedulePlacementCore(bool force)
     {
+#if LINUX_PORT
+        // Linux 版关闭干员摆放位置自动/手动推荐（避免高频变动干扰与算力消耗），保留场上识别、敌人路线与小棋盘手动推演。
+        ResetPlacement(force: false);
+        return;
+#else
         if (!Settings.FieldAuto && !force) return;
         var field = Field;
         var round = force ? field?.Round : Match.Economy?.Round;
@@ -126,6 +131,7 @@ public sealed partial class HostApi
                 }
             });
         }
+#endif
     }
 
     private void PublishPlacement(PlacementResult? result, int generation, Action? published = null)

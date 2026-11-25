@@ -33,10 +33,10 @@ public sealed class RoundEnemyReader(IOcrEngine ocr)
 
     private static (OpenCvSharp.Point Origin, double Scale)? Locate(Mat gray, double screenScale)
     {
-        // 90 到 100 档之间连续缩放；在小范围内同时比较图标和「敌人」两字。
-        double best = .78;
+        // 86 到 104 档之间连续缩放；适当放宽匹配门槛以兼容不同主题半透明背景和抗锯齿差异。
+        double best = .72;
         (OpenCvSharp.Point, double)? result = null;
-        for (int setting = 90; setting <= 100; setting += 2)
+        for (int setting = 86; setting <= 104; setting += 2)
         {
             double scale = screenScale * setting / 90;
             int w = (int)Math.Round(Title.Cols * scale), h = (int)Math.Round(Title.Rows * scale);
@@ -81,7 +81,7 @@ public sealed class RoundEnemyReader(IOcrEngine ocr)
         return PanelVisible(strip, Math.Min(image.Width / 1920d, image.Height / 1080d));
     }
 
-    public async Task<string[]?> ReadAsync(byte[] frame)
+    public async Task<string[]?> ReadAsync(byte[] frame, bool forceRead = false)
     {
         using var image = Cv2.ImDecode(frame, ImreadModes.Color);
         var strip = PanelStrip(image.Cols, image.Rows);
@@ -120,7 +120,7 @@ public sealed class RoundEnemyReader(IOcrEngine ocr)
         Cv2.Resize(listGreen, thumbnail, new CvSize(80, 40), interpolation: InterpolationFlags.Area);
         var pixels = new byte[80 * 40];
         Marshal.Copy(thumbnail.Data, pixels, 0, pixels.Length);
-        if (_listPixels is not null && _listPixels.Zip(pixels, (a, b) => Math.Abs(a - b)).Average() < 2)
+        if (!forceRead && _listPixels is not null && _listPixels.Zip(pixels, (a, b) => Math.Abs(a - b)).Average() < 2)
             return null;
         using var list2x = new Mat();
         Cv2.Resize(list, list2x, new CvSize(width * 2, height * 2), 0, 0, InterpolationFlags.Cubic);

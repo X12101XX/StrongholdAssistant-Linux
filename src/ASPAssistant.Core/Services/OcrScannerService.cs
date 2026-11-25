@@ -398,7 +398,7 @@ public class OcrScannerService : IDisposable
         }
         Task OtherTurn() => ObserveOtherTurn?.Invoke(screenshot, width, height) ?? Task.CompletedTask;
         bool panel = RoundEnemyReader.PanelVisible(bitmap);
-        if (await ReadEnemyPanelAsync(screenshot, panel)) { await OtherTurn(); return; }
+        if (await ReadEnemyPanelAsync(screenshot, bitmap, panel)) { await OtherTurn(); return; }
         if (ManualWaiting) return;
         var theme = _shopReader.Theme;
         var key = (width, height, theme);
@@ -648,27 +648,58 @@ public class OcrScannerService : IDisposable
     }
 
     /// <summary>先读探针存下的面板整图；本帧是面板时只读敌人（棋盘被挡着，跳过开局页、商店和场上认人），返回 true。</summary>
-    private async Task<bool> ReadEnemyPanelAsync(byte[] screenshot, bool panel)
+    private async Task<bool> ReadEnemyPanelAsync(byte[] screenshot, Bitmap bitmap, bool panel)
     {
         var observe = ObserveEnemyFrameAsync;
-        bool rest = !_pauseBanScreenDetection && _lastEconomy is { IsRest: true } && observe is not null;
+        if (_pauseBanScreenDetection || observe is null)
+        {
+            ObserveEnemyPanel(false);
+            if (_enemyPanelFast) { _enemyPanelFast = false; UpdateScanInterval(_visibleRest); }
+            return false;
+        }
+        bool rest = _lastEconomy is { IsRest: true };
         if (Interlocked.Exchange(ref _pendingEnemyFrame, null) is { } pending && rest && !panel)
         {
             ObserveEnemyPanel(true);
             await observe!(pending, _lastEconomy!);
             CollectionEnemyPanel?.Invoke(pending, _lastEconomy!);
         }
-        if (!rest || !panel)
+        if (!panel)
+        {
+            ObserveEnemyPanel(false);
+            if (_enemyPanelFast) { _enemyPanelFast = false; UpdateScanInterval(_visibleRest); }
+            return false;
+        }
+        // 玩家刚进休整期立刻点开/悬停敌人面板时，_lastEconomy 可能还停留在上一回合的战斗态（IsRest=false）
+        // 或上一回合的回合数；直接从顶部未被遮挡的回合栏刷新读数，避免敌人面板被后续 Obscured 提前丢弃。
+        EconomyReading? enemyEconomy = _lastEconomy;
+        if (enemyEconomy is not { IsRest: true, Round: not null } || !_enemyPanelOpen)
+        {
+            _economyReader ??= new EconomyReader(_ocrEngine, _shopReader.Theme);
+            var fresh = await _economyReader.ReadAsync(screenshot, bitmap, _shopReader.UiScale, false, false);
+            if (fresh.IsRest || fresh.Round is not null)
+            {
+                // 敌人面板本身只在休整期可点开，若顶部回合已读出则按休整期更新并同步宿主回合。
+                var normalized = fresh.IsRest ? fresh : fresh with { IsRest = true };
+                _lastEconomy = enemyEconomy = normalized;
+                EconomyRead?.Invoke(normalized);
+            }
+            else if (enemyEconomy is { Round: not null } prev)
+            {
+                enemyEconomy = prev with { IsRest = true };
+            }
+        }
+        if (enemyEconomy is not { IsRest: true })
         {
             ObserveEnemyPanel(false);
             if (_enemyPanelFast) { _enemyPanelFast = false; UpdateScanInterval(_visibleRest); }
             return false;
         }
         ObserveEnemyPanel(true);
-        await observe!(screenshot, _lastEconomy!);
-        CollectionEnemyPanel?.Invoke(screenshot, _lastEconomy!);
+        await observe!(screenshot, enemyEconomy);
+        CollectionEnemyPanel?.Invoke(screenshot, enemyEconomy);
         _enemyPanelFast = true;
-        _scanTimer.Interval = 150;
+        _scanTimer.Interval = 120;
         return true;
     }
 

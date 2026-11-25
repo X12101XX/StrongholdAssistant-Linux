@@ -11,7 +11,7 @@ public sealed partial class HostApi
 {
     private List<Strategy> _openingStrategies = [];
     private readonly object _adviceGate = new();
-    private sealed record OpeningInput(string? Mode, string? Boss, string? Map, CovenantState[] Covenants, string[] Bans);
+    private sealed record OpeningInput(string? Mode, bool Solo, string? Boss, string? Map, CovenantState[] Covenants, string[] Bans);
     private OpeningInput? _adviceInput;
 
     private void ResetStrategyAdvice()
@@ -29,15 +29,17 @@ public sealed partial class HostApi
         lock (_adviceGate)
         {
             var last = _adviceInput;
-            if (mapOnly && last is null) return;
             var match = _match;
+            // 若本局已有信息但上次尚未产出有效推荐，即使 mapOnly 触发也允许补算。
+            if (mapOnly && last is null && match.Source == "none") return;
             var covenants = match.Source == "none" ? [] : match.Covenants;
-            if (last is not null && last.Mode == match.Mode?.Id && last.Map == map && last.Boss == match.BossId
-                && last.Covenants.SequenceEqual(covenants) && last.Bans.SequenceEqual(match.BannedOperators)) return;
+            if (match.Source == "none" && match.Mode is null && match.BossId is null && map is null) return;
+            if (last is not null && last.Mode == match.Mode?.Id && last.Solo == match.Solo && last.Map == map && last.Boss == match.BossId
+                && last.Covenants.SequenceEqual(covenants) && last.Bans.SequenceEqual(match.BannedOperators)
+                && match.StrategyAdvice?.Status == "ok") return;
 
-            var input = new OpeningInput(match.Mode?.Id, match.BossId, map, covenants, match.BannedOperators);
+            var input = new OpeningInput(match.Mode?.Id, match.Solo, match.BossId, map, covenants, match.BannedOperators);
             _adviceInput = input;
-            _match = match with { StrategyAdvice = null };
             _ = ComputeStrategyAdviceAsync(input);
         }
     }
@@ -45,7 +47,7 @@ public sealed partial class HostApi
     private async Task ComputeStrategyAdviceAsync(OpeningInput input)
     {
         // 连续补录只计算最后一个快照。模型可能在计算时换局，发布前再次核对。
-        await Task.Delay(60).ConfigureAwait(false);
+        await Task.Delay(50).ConfigureAwait(false);
         lock (_adviceGate)
             if (!ReferenceEquals(input, _adviceInput)) return;
         var state = new MatchState { GameDataVersion = TextFact(_gameDataVersion), ModeId = TextFact(input.Mode),
@@ -53,7 +55,7 @@ public sealed partial class HostApi
             Covenants = ListFact(input.Covenants.Select(c => new MatchCovenant
                 { Id = TextFact(c.Id), Incomplete = BoolFact(c.Incomplete) }).ToArray()),
             BannedOperators = ListFact(input.Bans.Select(name => new MatchEntity { Name = TextFact(name) }).ToArray()) };
-        var result = BuildStrategyAdvice(state);
+        var result = BuildStrategyAdvice(state, input.Solo);
 
         void Publish()
         {
@@ -74,12 +76,16 @@ public sealed partial class HostApi
 #endif
     }
 
-    internal StrategyAdvice BuildStrategyAdvice(MatchState state)
+    internal StrategyAdvice BuildStrategyAdvice(MatchState state, bool soloFallback = false)
     {
         var mode = state.ModeId.Value;
-        var basis = StrategyBasis(mode) ?? "";
-        var candidates = _openingStrategies.Where(s => mode is null || !s.InactiveModes.Contains(mode)).Select(s => s.Id).ToArray();
-        var recommendation = RecommendOpeningStrategies(state, candidates);
+        bool fallback = mode is null || StrategyBasis(mode) is null;
+        var effectiveMode = fallback ? (soloFallback ? "mode_single_16" : "mode_multi_normal") : mode!;
+        var basis = fallback
+            ? (soloFallback ? "按默认规程等级16估" : "按默认险境模拟估")
+            : (StrategyBasis(effectiveMode) ?? "");
+        var candidates = _openingStrategies.Where(s => !s.InactiveModes.Contains(effectiveMode)).Select(s => s.Id).ToArray();
+        var recommendation = RecommendOpeningStrategies(state, candidates, soloFallback);
         if (recommendation.Candidates.Length == 0)
             return new("unavailable", recommendation.Assumptions[0], basis, [], new(0, 0), []);
         var items = recommendation.Candidates.Select(s =>

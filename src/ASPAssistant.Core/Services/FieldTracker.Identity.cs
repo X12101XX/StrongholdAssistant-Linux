@@ -194,6 +194,14 @@ public sealed partial class FieldTracker
                 continue;
             }
             var ranked = Rank(patch, unit.Tier, reidentify, names, CurrentName(unit), personalScores, out var evidence);
+            // 本局已购入/已确认且未卖出的干员给予轻微先验加权（+0.02），在外观相近的同阶干员间优先匹配本局名单。
+            if (_roster.Count > 0 && ranked.Length > 1)
+            {
+                ranked = ranked
+                    .Select(c => _roster.TryGetValue(c.Name, out var entry) && !entry.Sold
+                        ? c with { Score = c.Score + 0.02 } : c)
+                    .OrderByDescending(c => c.Score).ToArray();
+            }
             if (reidentify && unit.Operator is not null)
                 ranked = ranked.OrderByDescending(c => c.Score + (c.Name == unit.Operator ? .01 : 0)).ToArray();
             var candidates = ranked.Take(3).Select(c => new FieldCandidate(c.Name, c.Score)).ToArray();
@@ -202,11 +210,27 @@ public sealed partial class FieldTracker
             double gap = evidence.Logits is null || ranked.Length > 1
                 && _spriteModel!.StronglySupports(evidence.Logits, evidence.Templates, ranked[0].Name)
                 ? SpriteMatcher.AutoFillGap : IdentityAutoFillGap;
-            string status = candidates.Length == 0 ? "unknown" : evidence.Confirmed || ranked.Length > 1
-                && ranked[0].Score - ranked[1].Score >= gap ? "auto" : "pending";
+            // 模型与模板分歧保护：若小人 CNN 模型以高置信度（>=55%）认为不是首名，除非模板分压倒性领先，否则降级为 pending 避免静默认错人。
+            bool modelDisagrees = false;
+            if (evidence.Logits is not null && ranked.Length > 1)
+            {
+                var topModel = _spriteModel!.TopPrediction(evidence.Logits, names);
+                if (topModel is { } tm && tm.Name != ranked[0].Name && tm.Probability >= 0.55)
+                {
+                    double margin = ranked[0].Score - ranked[1].Score;
+                    if (ranked[0].Score < 0.72 || margin < 0.12)
+                        modelDisagrees = true;
+                }
+            }
+            bool highConfidence = !modelDisagrees && (evidence.Confirmed
+                || (ranked.Length > 1 && ranked[0].Score - ranked[1].Score >= gap));
+            string status = candidates.Length == 0 ? "unknown" : highConfidence ? "auto" : "pending";
+            // 仅高把握且低遮挡的自动结果才记入 _learned，防止临界/遮挡误判污染整局个人模板。
+            bool safeToRemember = status == "auto" && patch.OcclusionRatio < 0.15
+                && (evidence.Confirmed || (ranked.Length > 1 && ranked[0].Score >= 0.62 && ranked[0].Score - ranked[1].Score >= gap * 1.35));
             SetIdentity(cell, unit with { Operator = candidates.FirstOrDefault()?.Operator,
                 Source = candidates.Length == 0 ? null : "sprite", Status = status, Candidates = candidates,
-                Elite = unit.Operator == candidates.FirstOrDefault()?.Operator ? unit.Elite : null }, patch, force: force);
+                Elite = unit.Operator == candidates.FirstOrDefault()?.Operator ? unit.Elite : null }, patch, force: force, remember: safeToRemember);
         }
         _preparedRanks.Clear();
         foreach (var u in gone)
@@ -469,7 +493,9 @@ public sealed partial class FieldTracker
         var templateScores = templates;
         if (_spriteModel is not null)
         {
-            templates = _spriteModel.Fuse(logits!, templates);
+            // 无遮挡或轻遮挡时略微提高小人 CNN 模型融合权重（0.18），缓解特效光晕/底色偏色导致的模板误判。
+            double modelWeight = patch.OcclusionRatio < 0.15 ? 0.18 : SpriteModelMatcher.ModelWeight;
+            templates = _spriteModel.Fuse(logits!, templates, modelWeight);
         }
         return new(templateScores, templates, logits);
     }
@@ -496,12 +522,13 @@ public sealed partial class FieldTracker
         _learned.Add((unit, patch, force));
     }
 
-    private void SetIdentity(FieldCell cell, FieldUnit identity, FieldSpritePatch patch, bool force = false)
+    private void SetIdentity(FieldCell cell, FieldUnit identity, FieldSpritePatch patch, bool force = false, bool remember = true)
     {
         // 装备字段归独立追踪器管理。
         var current = _units[cell];
         _units[cell] = current with { Operator = identity.Operator, Source = identity.Source,
             Status = identity.Status, Candidates = identity.Candidates, Elite = identity.Elite };
-        Remember(_units[cell], patch, force);
+        if (remember || identity.Status == "sure")
+            Remember(_units[cell], patch, force);
     }
 }

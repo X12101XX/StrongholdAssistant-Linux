@@ -208,10 +208,10 @@ public sealed class SpriteModelMatcher : IDisposable
     public string[] Shortlist(float[] logits, IEnumerable<string> names, int count)
         => names.Distinct().OrderByDescending(n => logits[_indices[n]]).Take(count).ToArray();
 
-    internal string[] TemplateCandidates(float[] logits, string[] eligible, int count = 4)
+    internal string[] TemplateCandidates(float[] logits, string[] eligible, int count = 6)
     {
         var first = Shortlist(logits, eligible, count);
-        // 被浮签、箭头盖住时，模型会把这些同阶外观排出前四；补比模板仍受本局候选池限制。
+        // 被浮签、箭头盖住时，模型会把这些同阶外观排出前六；补比模板仍受本局候选池限制。
         return first.Concat(eligible.Where(name => name switch
         {
             "凯瑟琳" or "罗比菈塔" => first.Contains("风絮"),
@@ -220,6 +220,23 @@ public sealed class SpriteModelMatcher : IDisposable
             "地灵" => first.Contains("拜松") || first.Contains("慕斯"),
             _ => false
         })).Distinct().ToArray();
+    }
+
+    internal (string Name, double Probability)? TopPrediction(float[] logits, IEnumerable<string> eligible)
+    {
+        var list = eligible.Distinct().Where(_indices.ContainsKey).ToArray();
+        if (list.Length == 0) return null;
+        double max = list.Max(n => (double)logits[_indices[n]]);
+        double sum = 0;
+        string bestName = list[0];
+        double bestExp = -1;
+        foreach (var n in list)
+        {
+            double e = Math.Exp(logits[_indices[n]] - max);
+            sum += e;
+            if (e > bestExp) { bestExp = e; bestName = n; }
+        }
+        return sum > 0 ? (bestName, bestExp / sum) : null;
     }
 
     internal bool Confident(float[] logits, string[] eligible, string winner)
@@ -232,14 +249,15 @@ public sealed class SpriteModelMatcher : IDisposable
         return templates.Sum(c => Math.Exp(logits[_indices[c.Name]] - winner)) <= 1 / .9;
     }
 
-    public SpriteCandidate[] Fuse(float[] logits, IReadOnlyList<SpriteCandidate> templates)
+    public SpriteCandidate[] Fuse(float[] logits, IReadOnlyList<SpriteCandidate> templates, double? weightOverride = null)
     {
         if (templates.Count == 0) return [];
+        double w = weightOverride ?? _modelWeight;
         double max = templates.Max(c => (double)logits[_indices[c.Name]]);
         var weights = templates.Select(c => Math.Exp(logits[_indices[c.Name]] - max)).ToArray();
         double sum = weights.Sum();
         return templates.Select((c, i) => new SpriteCandidate(c.Name,
-            (1 - _modelWeight) * c.Score + _modelWeight * weights[i] / sum))
+            (1 - w) * c.Score + w * weights[i] / sum))
             .OrderByDescending(c => c.Score).ToArray();
     }
 

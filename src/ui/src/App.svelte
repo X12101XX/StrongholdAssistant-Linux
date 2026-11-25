@@ -29,8 +29,6 @@
   import type { ResizeEdge } from './lib/api/types'
   import { accentTokens, ACCENT_KEYS } from './lib/accent'
   import { asset } from './lib/assets'
-  import { fly } from 'svelte/transition'
-  import { cubicOut } from 'svelte/easing'
   import UpdateBar from './components/UpdateBar.svelte'
   import ControlBar from './components/ControlBar.svelte'
   import ControlRisk from './components/ControlRisk.svelte'
@@ -85,19 +83,39 @@
   })
 
   let scroller: HTMLElement | undefined = $state()
-  $effect(() => {
-    app.tab
-    if (scroller) scroller.scrollTop = 0
-  })
 
-  // 切换标签时页面从切换方向滑入：往右边的标签切，新页面从右边进来
-  const order = ['match', 'lineup', 'codex', 'history']
-  let prev = app.tab
-  let dir = $state(1)
+  // Keep-Alive 懒挂载标签页 + 每页独立滚动记忆 + 灵动 GPU 弹簧切换动画：
+  // 切页不再销毁并重建 218 张图鉴卡片 DOM，消除切页卡顿。
+  const order = ['match', 'lineup', 'codex', 'history'] as const
+  type TabId = (typeof order)[number]
+  let visited = $state<Record<TabId, boolean>>({
+    match: app.tab === 'match',
+    lineup: app.tab === 'lineup',
+    codex: app.tab === 'codex',
+    history: app.tab === 'history',
+  })
+  const scrollMemo: Record<TabId, number> = { match: 0, lineup: 0, codex: 0, history: 0 }
+  let prev: TabId = app.tab
+  let dir = $state<1 | -1>(1)
+  let animTick = $state(0)
   $effect.pre(() => {
     const t = app.tab
-    dir = order.indexOf(t) >= order.indexOf(prev) ? 1 : -1
-    prev = t
+    if (!visited[t]) visited[t] = true
+    if (t !== prev) {
+      if (scroller) scrollMemo[prev] = scroller.scrollTop
+      dir = order.indexOf(t) >= order.indexOf(prev) ? 1 : -1
+      prev = t
+      animTick++
+    }
+  })
+  $effect(() => {
+    const t = app.tab
+    const y = scrollMemo[t] ?? 0
+    if (scroller) {
+      requestAnimationFrame(() => {
+        if (scroller) scroller.scrollTop = y
+      })
+    }
   })
 
   // 广场新消息提醒（v0.9.3）：开着时启动就问一次未读数，之后每 10 分钟一次；关掉就不在后台联网
@@ -176,31 +194,41 @@
   {#if !app.workbench}<UpdateBar />{/if}
   <div class="content" class:wb={app.workbench} class:lineup={app.tab === 'lineup'} class:docked={app.workbench && (!!app.detail || !!plaza.viewing || app.tab === 'codex')}>
     <main bind:this={scroller}>
-      {#key app.tab}
-        <!-- 历史页在工作台里左右两栏各自滚动，需要撑满滚动区的高度 -->
-        <div class:fill={app.tab === 'history' || (app.workbench && app.tab === 'lineup')} in:fly={{ x: 10 * dir, duration: 90, easing: cubicOut }}>
-          <!-- 一页渲染出错只挡住这一页，别的页照常能切 -->
-          <svelte:boundary onerror={(e) => reportUiError(`${app.tab} 页出错`, e)}>
-            {#if app.tab === 'match'}
-              <MatchPage />
-            {:else if app.tab === 'lineup'}
-              <LineupPage />
-            {:else if app.tab === 'codex'}
-              <CodexPage />
-            {:else}
-              <HistoryPage />
-            {/if}
-            {#snippet failed(error, reset)}
-              <div class="crash">
-                <b>这一页出错了</b>
-                <p>可以先切到别的页，或点「重试」。还不行就在设置里导出诊断包发给我们。</p>
-                <code>{error instanceof Error ? error.message : String(error)}</code>
-                <button onclick={reset}>重试</button>
-              </div>
-            {/snippet}
-          </svelte:boundary>
-        </div>
-      {/key}
+      {#each order as tabId (tabId)}
+        {#if visited[tabId]}
+          {@const active = app.tab === tabId}
+          <!-- 历史页在工作台里左右两栏各自滚动，需要撑满滚动区的高度；非激活页隐藏但保活 DOM -->
+          <div
+            class="pane"
+            class:active
+            class:enter-next={active && animTick > 0 && dir > 0}
+            class:enter-prev={active && animTick > 0 && dir < 0}
+            class:fill={tabId === 'history' || (app.workbench && tabId === 'lineup')}
+            aria-hidden={!active}
+          >
+            <!-- 一页渲染出错只挡住这一页，别的页照常能切 -->
+            <svelte:boundary onerror={(e) => reportUiError(`${tabId} 页出错`, e)}>
+              {#if tabId === 'match'}
+                <MatchPage />
+              {:else if tabId === 'lineup'}
+                <LineupPage />
+              {:else if tabId === 'codex'}
+                <CodexPage />
+              {:else}
+                <HistoryPage />
+              {/if}
+              {#snippet failed(error, reset)}
+                <div class="crash">
+                  <b>这一页出错了</b>
+                  <p>可以先切到别的页，或点「重试」。还不行就在设置里导出诊断包发给我们。</p>
+                  <code>{error instanceof Error ? error.message : String(error)}</code>
+                  <button onclick={reset}>重试</button>
+                </div>
+              {/snippet}
+            </svelte:boundary>
+          </div>
+        {/if}
+      {/each}
     </main>
     <ControlBar />
     <DetailSheet />
@@ -332,6 +360,39 @@
     position: relative;
     flex: 1;
     min-height: 0;
+  }
+  main > .pane {
+    display: none;
+  }
+  main > .pane.active {
+    display: block;
+    will-change: transform, opacity;
+  }
+  main > .pane.active.enter-next {
+    animation: pane-in-next 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  main > .pane.active.enter-prev {
+    animation: pane-in-prev 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes pane-in-next {
+    from {
+      opacity: 0;
+      transform: translate3d(18px, 0, 0) scale(0.988);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+  }
+  @keyframes pane-in-prev {
+    from {
+      opacity: 0;
+      transform: translate3d(-18px, 0, 0) scale(0.988);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+    }
   }
   main > .fill {
     height: 100%;

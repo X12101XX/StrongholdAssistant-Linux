@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { control, MODES } from '../lib/control.svelte'
   import { slide } from 'svelte/transition'
   import { opMatches } from '../lib/opsearch'
   import { cubicOut } from 'svelte/easing'
   import { app } from '../lib/state.svelte'
   import { field, cellKey, sameCell, placeable, terrainOf } from '../lib/field.svelte'
   import { asset, ROMAN } from '../lib/assets'
-  import { api, type FieldCell, type FieldUnit, type PlacementGoal, type PlacementMove } from '../lib/api'
+  import { api, type FieldCell, type FieldUnit, type PlacementMove } from '../lib/api'
   import SectionHeader from './SectionHeader.svelte'
   import Icon from './Icon.svelte'
 
@@ -103,37 +102,17 @@
   const walkN = $derived((b?.routes ?? []).filter((r) => r.motion === 'walk' && !r.boss).reduce((n, r) => n + r.count, 0))
   const flyN = $derived((b?.routes ?? []).filter((r) => r.motion === 'fly' && !r.boss).reduce((n, r) => n + r.count, 0))
 
-  // ── 人：推演后的位置；推荐里有、但人不在推荐格上的，画成虚影
-  let showPlan = $state(true)
+  // ── 站位推荐已关闭（保留棋盘识别、敌人路线与手动推演）
+  const showPlan = false
   // 用 O(1) Map 代替每格 O(N) 线性扫描，消除 45 格高频重绘开销
   const layoutByCell = $derived(new Map(field.layout.map((x) => [cellKey(x.at), x])))
   const summonByCell = $derived(new Map((st?.summons ?? []).map((s) => [cellKey(s), s])))
   const atCell = (c: FieldCell) => layoutByCell.get(cellKey(c))
   // 召唤物（任务 291，如鸟笼）：不是干员，画成淡色的圆，写名字第一个字；推演拖人时那格照样当有东西
   const summonAt = (c: FieldCell) => summonByCell.get(cellKey(c))
-  // 推荐：每条 move 按 from 认人；人现在（含推演）不在推荐格上的，在推荐格上画虚影
-  const placedKeys = $derived(new Set(field.layout.map((x) => `${cellKey(x.unit)}->${cellKey(x.at)}`)))
-  const placed = (m: PlacementMove) => placedKeys.has(`${cellKey(m.from)}->${cellKey(m.to)}`)
-  const ghosts = $derived(showPlan && field.plan ? field.plan.moves.filter((m) => !placed(m)).map((m) => ({ ...m.to, operator: m.operator, facing: m.facing })) : [])
+  const ghosts = $derived<Array<FieldCell & { operator: string; facing: PlacementMove['facing'] }>>([])
   const ghostByCell = $derived(new Map(ghosts.map((g) => [cellKey(g), g])))
-  const facingByPair = $derived(
-    showPlan && field.plan
-      ? new Map(field.plan.moves.map((m) => [`${cellKey(m.from)}->${cellKey(m.to)}`, m.facing ?? null]))
-      : null,
-  )
-  /** 已经站在推荐格上的人的朝向（显示小箭头） */
-  const facingOf = (u: FieldUnit, at: FieldCell) => facingByPair?.get(`${cellKey(u)}->${cellKey(at)}`) ?? null
-  // 推荐目标（Settings.placementGoal）：改了宿主重算；旧宿主没有这一项时按平衡
-  const GOALS = [
-    { id: 'leak', label: '漏怪最少', tip: '尽量一只不漏，不管叠层' },
-    { id: 'balanced', label: '平衡', tip: '守住为主，兼顾叠层' },
-    { id: 'layers', label: '叠层最多', tip: '尽量多叠盟约层数，可能多漏几只' },
-  ] as const
-  const goal = $derived(app.settings.placementGoal ?? 'balanced')
-  const setGoal = (g: PlacementGoal) => {
-    app.settings.placementGoal = g
-    app.saveSettings()
-  }
+  const facingOf = (_u: FieldUnit, _at: FieldCell): PlacementMove['facing'] => null
   // 场上自动识别开关（Settings.fieldAuto）：可在棋盘顶栏一键开关，智能检测棋盘变动后自动更新
   const auto = $derived(app.settings.fieldAuto ?? true)
   const toggleAuto = () => {
@@ -144,7 +123,6 @@
   const busy = $derived(field.recognizing)
   const keyTip = $derived(app.settings.fieldHotkey ? `（${app.settings.fieldHotkey}）` : '')
   const hhmm = (iso: string) => new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  const moveN = $derived(field.plan ? field.plan.moves.filter((m) => !sameCell(m.from, m.to)).length : 0)
   const ghostAt = (c: FieldCell) => ghostByCell.get(cellKey(c))
 
   // ── 拖动推演：按下后移动超过 4px 才算拖，否则是点（打开确认面板）；使用 rAF 节流避免高频 pointermove 卡顿
@@ -568,7 +546,7 @@
             </div>
           </div>
         {/if}
-        <!-- 推演、推荐 -->
+        <!-- 推演状态（干员摆放位置推荐已关闭） -->
         <div class="foot">
           {#if field.sandbox}
             <span class="sbx"><i></i>推演中 · 不影响游戏</span>
@@ -577,56 +555,6 @@
             <span class="hint">拖动可以自己摆着看，不影响游戏</span>
           {/if}
         </div>
-        <div class="rec" class:none={!field.plan}>
-          {#if field.plan}
-            {@const pl = field.plan}
-            {@const rec = pl.recommended}
-            {@const worst = rec && rec.streams.length > 1 ? rec.streams.reduce((a, x) => (x.leaked > a.leaked ? x : a)) : null}
-            <div class="rh">
-              <b>站位推荐</b>
-              <span class="seg goal">
-                {#each GOALS as g (g.id)}
-                  <button class:on={goal === g.id} onclick={() => setGoal(g.id)} title={g.tip}>{g.label}</button>
-                {/each}
-              </span>
-            </div>
-            <div class="rh">
-              {#if pl.goal !== goal}<em class="stale">正在按「{GOALS.find((g) => g.id === goal)?.label}」重算…</em>
-              {:else if field.planStale}<em class="stale">场上变了，等重新算</em>
-              {:else}<em class="mv">{moveN ? `游戏里要挪 ${moveN} 人` : '现在就是推荐站位'}</em>{/if}
-              <span class="sp"></span>
-              <button class="chip" class:on={showPlan} onclick={() => (showPlan = !showPlan)}><i></i>虚影</button>
-              {#if moveN}<button class="act" onclick={() => field.applyPlan()} title="在这块小棋盘上照推荐摆着看，不动游戏"><Icon name="magic" size={13} />小棋盘上摆</button>{/if}
-              {#if moveN && control.settings.enabled}
-                <button
-                  class="act game"
-                  disabled={field.planStale || pl.goal !== goal || control.running}
-                  title={field.planStale ? '场上变了，等重新算完再摆' : control.running ? '上一批操作还没做完' : `在游戏里照推荐挪这 ${moveN} 人（${MODES.find((m) => m.id === control.settings.mode)?.label}）`}
-                  onclick={() => control.run(() => api.runPlacement())}
-                ><Icon name="play" size={12} />游戏里摆</button>
-              {/if}
-            </div>
-            {#if rec}
-              <p class="sim">
-                {#if pl.current && moveN}现在这样摆预计漏 <b class:bad={pl.current.leaked > 0}>{pl.current.leaked}</b> 只 → 照推荐漏 <b class:bad={rec.leaked > 0}>{rec.leaked}</b> 只
-                {:else}预计漏 <b class:bad={rec.leaked > 0}>{rec.leaked}</b> 只{/if}
-                <small>（本回合约 {rec.enemies} 只敌人）</small>
-              </p>
-              {#if worst}<p class="sim sub">最坏：{worst.label}（{Math.round(worst.chance * 100)}%）漏 <b class:bad={worst.leaked > 0}>{worst.leaked}</b> 只</p>{/if}
-              {#if rec.layers.length}
-                <p class="sim sub">叠层：{#each rec.layers as l, i (l.covenant)}{i ? ' · ' : ''}{app.cov(l.covenant)?.name ?? l.covenant} <b>{l.layers}</b> 层{/each}</p>
-              {/if}
-            {/if}
-            <p class="asm">
-              {#if field.plan.guessed}有 {field.plan.guessed} 格是猜的（待确认的按最像的算）。{/if}
-              {#if field.plan.skipped.length}{field.plan.skipped.length} 格认不出或没有资料，没算进去。{/if}
-              按这些假设算的：{field.plan.assumptions.join('；')}。结果是近似推荐，漏 0 只也不等于一定守住。
-            </p>
-          {:else}
-            <b>站位推荐</b><span>{field.planPending ? '正在算，算好会显示在这块棋盘上…' : auto ? '休整期会自动识别场上并给出推荐站位，也可点「识别」立即刷新' : '休整时点「识别」，会在这块棋盘上给出推荐站位'}</span>
-          {/if}
-        </div>
-
       {/if}
     </div>
   {/if}
@@ -1150,80 +1078,6 @@
     color: var(--fg-0);
     box-shadow: inset 0 0 0 1px var(--line-hi);
   }
-  .act.game {
-    color: var(--mint-ink);
-    background: var(--mint);
-    box-shadow: none;
-    font-weight: var(--fw-bold);
-  }
-  .act.game:hover:not(:disabled) {
-    color: var(--mint-ink);
-    background: var(--mint-hi);
-    box-shadow: none;
-  }
-  .act.game:disabled {
-    opacity: 0.4;
-  }
-  .rec {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 6px 8px;
-    background: var(--well);
-    box-shadow: inset 0 0 0 1px var(--line-soft);
-    font-size: var(--fs-sm);
-  }
-  .rec.none {
-    flex-direction: row;
-    align-items: baseline;
-    gap: 8px;
-    color: var(--fg-4);
-  }
-  .rec.none b {
-    color: var(--fg-3);
-    font-weight: var(--fw-semi);
-  }
-  .rh {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .rh b {
-    color: var(--fg-1);
-  }
-  .rh em {
-    font-style: normal;
-    color: var(--gold);
-    font-size: var(--fs-xs);
-  }
-  .rh em.stale {
-    color: var(--fg-3);
-  }
-  .rh em.mv {
-    color: var(--mint);
-  }
-  .sim {
-    margin: 0;
-    color: var(--fg-2);
-    font-size: var(--fs-xs);
-  }
-  .sim b {
-    color: var(--fg-0);
-    font-family: var(--font-term);
-  }
-  .sim b.bad {
-    color: var(--red-fg);
-  }
-  .sim small {
-    color: var(--fg-3);
-    font-size: var(--fs-2xs);
-  }
-  .sim.sub {
-    color: var(--fg-3);
-  }
-  .goal {
-    margin-left: auto;
-  }
   /* 朝向：格子边上的小三角，指向干员面对的方向（攻击范围那边） */
   .dir {
     position: absolute;
@@ -1256,14 +1110,6 @@
     left: 50%;
     translate: -50% 0;
     border-top-color: var(--mint);
-  }
-  .sp {
-    flex: 1;
-  }
-  .asm {
-    margin: 0;
-    color: var(--fg-3);
-    font-size: var(--fs-xs);
   }
 
   /* 点选确认 */

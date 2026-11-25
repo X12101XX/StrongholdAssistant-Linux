@@ -86,24 +86,32 @@ public sealed partial class HostApi
             if (generation == _matchReadingGeneration && match == _activeRecord && id != null)
                 ApplyRecognizedStrategy(id);
         }
+        // 兜底：若已读出本局信息但策略推荐仍未就绪，自动补算一次。
+        if (Match.Source != "none" && Match.StrategyAdvice?.Status != "ok")
+            ScheduleStrategyAdvice();
     }
 
     public async Task ObserveEnemyFrameAsync(byte[] frame, EconomyReading reading)
     {
-        // 回合数字偶尔单帧漏读（如 Closure 字体 7 误读为 Z）时，允许沿用已确认的当前休整回合，避免整次悬停被静默丢弃。
-        if (!reading.IsRest || Match.Economy is not { } economy || (reading.Round is { } r && r != economy.Round)) return;
+        if (!reading.IsRest) return;
+        // 刚进新回合立刻点开敌人面板时，若 reading 已读出更新的回合数，先同步到 Match.Economy 再读取敌人列表。
+        if (reading.Round is { } freshRound && (Match.Economy is null || freshRound > Match.Economy.Round))
+            ObserveEconomy(reading);
+        int? targetRound = reading.Round ?? Match.Economy?.Round;
+        if (targetRound is not > 0) return;
         string? match = _activeRecord;
         int generation = _matchReadingGeneration;
-        var key = (match, (int?)economy.Round);
+        var key = (match, targetRound);
         if (_enemyReadKey != key) { _roundEnemyReader.Reset(); _enemyReadKey = key; }
-        var names = await _roundEnemyReader.ReadAsync(frame);
+        bool needFresh = Match.RoundEnemies?.Round != targetRound || Match.RoundEnemies.Enemies.Length == 0;
+        var names = await _roundEnemyReader.ReadAsync(frame, forceRead: needFresh);
         if (names is not null)
         {
-            AppLogger.Info("RoundEnemy", $"敌人名单读到 {names.Length} 个：{string.Join("、", names)}");
+            AppLogger.Info("RoundEnemy", $"敌人名单读到 {names.Length} 个（第 {targetRound} 回合）：{string.Join("、", names)}");
             if (names.Length > 0 && !_enemyPanelCounted) { _enemyPanelRead++; _enemyPanelCounted = true; }
         }
-        if (generation == _matchReadingGeneration && match == _activeRecord && Match.Economy?.Round == economy.Round && names is { Length: > 0 })
-            ApplyRoundEnemies(economy.Round, names);
+        if (generation == _matchReadingGeneration && match == _activeRecord && names is { Length: > 0 })
+            ApplyRoundEnemies(targetRound.Value, names);
     }
 
     private void ResetMatchReading()

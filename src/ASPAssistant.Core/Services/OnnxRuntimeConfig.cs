@@ -346,6 +346,24 @@ public static class OnnxRuntimeConfig
         return hasCudnn;
     }
 
+    private const int RtldLazy = 0x00001;
+    private const int RtldGlobal = 0x00100;
+
+    [DllImport("libdl.so.2", EntryPoint = "dlopen")]
+    private static extern IntPtr DlOpen(string filename, int flags);
+
+    private static bool TryLoadGlobal(string path)
+    {
+        try
+        {
+            return DlOpen(path, RtldLazy | RtldGlobal) != IntPtr.Zero;
+        }
+        catch
+        {
+            return NativeLibrary.TryLoad(path, out _);
+        }
+    }
+
     private static void PreloadCudaDependencies(string? extraDir = null)
     {
         string[] searchDirs =
@@ -357,13 +375,16 @@ public static class OnnxRuntimeConfig
             "/usr/lib64",
             "/usr/lib/x86_64-linux-gnu"
         ];
+        // Preload CUDA & cuDNN 9 sub-libraries with RTLD_GLOBAL so libonnxruntime_providers_cuda.so
+        // resolves cudnn* / cublas* / cudart* symbols cleanly even when loaded via dlopen(RTLD_LOCAL).
+        // Do NOT preload libonnxruntime_providers_shared.so here — let provider_bridge_ort load it.
         string[] libs =
         [
             "libcudart.so.13", "libcudart.so.12", "libcudart.so",
             "libcublasLt.so.13", "libcublasLt.so.12", "libcublasLt.so",
             "libcublas.so.13", "libcublas.so.12", "libcublas.so",
             "libcudnn.so.9", "libcudnn.so.8", "libcudnn.so",
-            "libonnxruntime_providers_shared.so"
+            "libcudnn_ops.so.9", "libcudnn_cnn.so.9", "libcudnn_adv.so.9", "libcudnn_graph.so.9"
         ];
         foreach (var lib in libs)
         {
@@ -371,7 +392,7 @@ public static class OnnxRuntimeConfig
             {
                 if (string.IsNullOrEmpty(dir)) continue;
                 var full = Path.Combine(dir, lib);
-                if (File.Exists(full) && NativeLibrary.TryLoad(full, out _))
+                if (File.Exists(full) && TryLoadGlobal(full))
                     break;
             }
         }

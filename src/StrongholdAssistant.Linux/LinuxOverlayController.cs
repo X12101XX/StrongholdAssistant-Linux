@@ -595,8 +595,8 @@ internal sealed class LinuxOverlayController : IDisposable
                     ? (0.953, 0.702, 0.133)
                     : isFly ? (0.780, 0.608, 1.000)
                     : (1.000, 0.353, 0.306);
-                double shiftX = isFly ? 0.2 : isBoss ? -0.17 : 0;
-                double shiftY = isFly ? -0.26 : isBoss ? 0.2 : 0;
+                double shiftX = isFly ? 0.14 : isBoss ? -0.14 : 0;
+                double shiftY = isFly ? -0.14 : isBoss ? 0.14 : 0;
 
                 double outlineAlpha = isActive ? (activeIndex >= 0 ? 0.26 : 0.22) : 0.07;
                 double coreAlpha = isActive ? (activeIndex >= 0 ? 0.46 : 0.38) : 0.14;
@@ -612,7 +612,8 @@ internal sealed class LinuxOverlayController : IDisposable
                     for (int i = 0; i < n; i++)
                     {
                         var pt = segment[i];
-                        var proj = routes.Projection.Project(pt.Col + 0.5 + shiftX, pt.Row + 0.5 + shiftY);
+                        // EnemyRoute.Segments 的坐标本身就是半整数格中心（如 0.5, 1.5），无需再 +0.5，确保路线正穿地块中心。
+                        var proj = routes.Projection.Project(pt.Col + shiftX, pt.Row + shiftY);
                         double px = proj.X * w, py = proj.Y * h;
                         pts[i] = (px, py);
                         if (i > 0) sbPts.Append(' ');

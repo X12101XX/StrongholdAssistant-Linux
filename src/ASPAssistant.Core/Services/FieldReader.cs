@@ -383,7 +383,8 @@ public sealed partial class FieldReader : IDisposable
                 p => (p.Value.X - 35 * (badgeScale - 1) * width / 1920,
                       p.Value.Y - (p.Key.Zone == "bench" ? 132 : 112) * (badgeScale - 1) * height / 1080));
             fit = FitFieldCamera(bitmap, landmarks, scaledAnchors);
-            if (landmarks.Count >= 2)
+            // 至少 4 个角标联合定标才写入镜头缓存，防止前期仅 1-2 个干员时锁定偏差镜头导致后续裁块偏移认错人。
+            if (landmarks.Count >= 4)
                 _cameraFitCache = (_round, mapId, bitmap.Width, bitmap.Height, expanded, camera?.PlayerSide, BossRound, badgeScale, fit, landmarks.Count);
         }
         void ApplyCameraFit(double scaleVal, (double Scale, double X, double Y) fitVal)
@@ -468,8 +469,22 @@ public sealed partial class FieldReader : IDisposable
         }
 
         ScanCellsWithCurrentCamera();
-        // Self-heal: if cached camera suddenly sees 0 units when previously >=2 existed, re-fit full landmarks once.
-        if (usedCameraCache && matchedBadges.Count == 0 && cachedUnitCount >= 2)
+        // Self-heal: verify cached camera alignment (drift & badge count); if drifted or dropped, re-fit full landmarks once.
+        bool cacheDrifted = false;
+        if (usedCameraCache && matchedBadges.Count > 0)
+        {
+            double driftSum = 0;
+            foreach (var (cell, b) in matchedBadges)
+            {
+                var a = anchors[cell];
+                double dx = Math.Abs(b.X * width - a.X);
+                double dy = Math.Abs(b.Y * height - a.Y);
+                if (cell.Zone == "board") dy = Math.Min(dy, Math.Abs(b.Y * height - (a.Y - 26 * width / 1920)));
+                driftSum += Math.Max(dx, dy);
+            }
+            if (driftSum / matchedBadges.Count > 4.0) cacheDrifted = true;
+        }
+        if (usedCameraCache && (cacheDrifted || matchedBadges.Count < Math.Max(1, cachedUnitCount - 1)))
         {
             _cameraFitCache = null;
             var landmarks = ReadBadges(bodyPixels, cameraFrame.Width, cameraFrame.Height);
@@ -481,7 +496,7 @@ public sealed partial class FieldReader : IDisposable
             fit = FitFieldCamera(bitmap, landmarks, scaledAnchors);
             ApplyCameraFit(badgeScale, fit);
             ScanCellsWithCurrentCamera();
-            if (landmarks.Count >= 2)
+            if (landmarks.Count >= 4)
                 _cameraFitCache = (_round, mapId, bitmap.Width, bitmap.Height, expanded, camera?.PlayerSide, BossRound, badgeScale, fit, matchedBadges.Count);
         }
         foreach (var (cell, p) in anchors)

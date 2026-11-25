@@ -76,7 +76,11 @@ public sealed class HostSettingsStore(string path)
             PlazaNotices = json["plazaNotices"]?.GetValue<bool>() ?? true,
             Routes = RouteOverlaySettings.Load(json["routes"]),
             ShopAdvice = json["shopAdvice"]?.GetValue<bool>() ?? false,
+#if LINUX_PORT
+            OverlayLayers = (json["overlayLayers"]?.Deserialize<OverlayLayerSettings>(HostApi.JsonOptions) ?? new()) with { Placement = false },
+#else
             OverlayLayers = json["overlayLayers"]?.Deserialize<OverlayLayerSettings>(HostApi.JsonOptions) ?? new(),
+#endif
             MarkerStyles = MarkerStyles.Load(json["markerStyles"]),
             ShopScanSpeed = json["shopScanSpeed"] is JsonValue speedValue
                 && speedValue.TryGetValue<string>(out var speed) && speed is ("normal" or "fast") ? speed

@@ -49,11 +49,13 @@ public sealed partial class HostApi
         _ => null
     };
 
-    public StrategyRecommendation RecommendOpeningStrategies(MatchState state, string[] candidateIds)
+    public StrategyRecommendation RecommendOpeningStrategies(MatchState state, string[] candidateIds, bool soloFallback = false)
     {
         var mode = state.ModeId.Value;
-        if (mode is null || StrategyBasis(mode) is null) return new([], ["还没认出本局模式"]);
-        bool multi = mode.StartsWith("mode_multi_", StringComparison.Ordinal);
+        bool fallbackMode = mode is null || StrategyBasis(mode) is null;
+        if (fallbackMode)
+            mode = soloFallback ? "mode_single_16" : "mode_multi_normal";
+        bool multi = mode!.StartsWith("mode_multi_", StringComparison.Ordinal);
         var model = (multi ? _multiStrategyModel : _strategyModel).Value;
         if (model is null) return new([], ["未能加载推荐模型，请检查助手的数据文件"]);
         if (_gameDataVersion is null || state.GameDataVersion.Value != _gameDataVersion || model.Version != _gameDataVersion)
@@ -63,13 +65,16 @@ public sealed partial class HostApi
             "按复刻里的电脑玩家估计，它不擅长的策略可能被低估。",
             "第三方复刻里部分效果和游戏有差异，估计可能有偏差。"
         };
+        if (fallbackMode)
+            assumptions.Insert(0, $"未读到具体模式，暂按{(soloFallback ? "单人规程等级16" : "多人险境模拟")}估算。");
         if (multi) assumptions.Add("队友按复刻里的电脑玩家估计，真人队友的打法可能不同。目前多人推荐的把握不大。");
-        if (candidateIds.Any(id => !model.InitialHp.ContainsKey(id))) return new([], ["游戏里的策略和推荐模型对不上，等助手更新"]);
+        var validCandidates = candidateIds.Distinct().Where(model.InitialHp.ContainsKey).ToArray();
+        if (validCandidates.Length == 0) return new([], ["游戏里的策略和推荐模型对不上，等助手更新"]);
         int n = multi || mode == "mode_single_funny" ? 0 : int.Parse(mode.AsSpan(12));
         var difficulty = Difficulty(mode)!;
         int cap = multi ? (difficulty == "FUNNY" ? 14 : 15) : n == 0 ? 9 : n <= 4 ? 14 : 15;
         var estimates = new List<StrategyEstimate>();
-        foreach (var id in candidateIds.Distinct())
+        foreach (var id in validCandidates)
         {
             var features = new Dictionary<string, double> { ["level"] = n / 20.0,
                 ["hp"] = (model.InitialHp[id] - 25) / 10.0, [mode] = 1, [difficulty] = 1,

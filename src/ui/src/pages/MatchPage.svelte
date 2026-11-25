@@ -124,9 +124,20 @@
   const wide = $derived(app.workbench && pageW >= 960)
   const usable = $derived(
     app.lineups
-      .map((l) => ({ l, bad: app.session.targetLineupId === l.id ? -Infinity : app.lineupPenalty(l) }))
-      .sort((a, b) => a.bad - b.bad)
-      .slice(0, 3),
+      .map((l) => {
+        const isTarget = app.session.targetLineupId === l.id
+        const banned = app.bannedIn(l).length
+        const ratio = l.members.length ? banned / l.members.length : 0
+        const incGoals = l.goals.filter((g) => app.matchCovenant(g.id)?.incomplete).length
+        return { l, isTarget, banned, ratio, incGoals }
+      })
+      .sort((a, b) =>
+        Number(b.isTarget) - Number(a.isTarget) ||
+        a.banned - b.banned ||
+        a.ratio - b.ratio ||
+        a.incGoals - b.incGoals ||
+        b.l.updatedAt.localeCompare(a.l.updatedAt),
+      ),
   )
 
   // 特别关注：本局阵容不完整的关注盟约、被禁的关注干员
@@ -543,7 +554,7 @@
 
 {#snippet bLineups()}
   <section>
-    <SectionHeader title="本局可用阵容" en="LINEUP PLANNER" ontoggle={fold('lineups')} folded={!open('lineups')}>
+    <SectionHeader title="本局可用阵容" en="LINEUP PLANNER" tag={usable.length ? `${usable.length} 套` : undefined} ontoggle={fold('lineups')} folded={!open('lineups')}>
       {#snippet icon()}
         <Icon name="grid" size={18} />
       {/snippet}
@@ -553,15 +564,16 @@
     </SectionHeader>
     {#if open('lineups')}
     <div class="recs" transition:slide={sl}>
-      {#each usable as { l } (l.id)}
-        {@const isT = app.session.targetLineupId === l.id}
-        <LineupCard lineup={l} target={isT}>
-          {#snippet actions()}
-            {#if !isT}<button class="act" onclick={() => app.setTarget(l.id)}>设为目标</button>{/if}
-          {/snippet}
-        </LineupCard>
-      {/each}
-      <button class="all" onclick={() => (app.setTab('lineup'), (app.lineupView = 'mine'))}>我的阵容<Icon name="arrowRight" size={14} /></button>
+      <div class="recs-scroll">
+        {#each usable as { l, isTarget } (l.id)}
+          <LineupCard lineup={l} target={isTarget}>
+            {#snippet actions()}
+              {#if !isTarget}<button class="act" onclick={() => app.setTarget(l.id)}>设为目标</button>{/if}
+            {/snippet}
+          </LineupCard>
+        {/each}
+      </div>
+      <button class="all" onclick={() => (app.setTab('lineup'), (app.lineupView = 'mine'))}>全部我的阵容 ({usable.length})<Icon name="arrowRight" size={14} /></button>
     </div>
     {/if}
   </section>
@@ -1482,6 +1494,18 @@
     flex-direction: column;
     gap: 6px;
     padding-top: 8px;
+  }
+  .recs-scroll {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 480px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 2px;
+  }
+  .page.wide .recs-scroll {
+    max-height: calc(100vh - 150px);
   }
   .all {
     display: flex;

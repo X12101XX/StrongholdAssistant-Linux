@@ -85,39 +85,11 @@ public sealed class MaaOcrEngine : IOcrEngine, IDisposable
         controller.LinkStart().Wait();
         var resource = new MaaResource();
 #if LINUX_PORT
-        bool ocrCuda = false;
-        if (OnnxRuntimeConfig.ShouldTryCuda())
-        {
-            try
-            {
-                resource.SetOption_InferenceExecutionProvider(InferenceExecutionProvider.CUDA);
-                resource.SetOption_InferenceDevice(OnnxRuntimeConfig.DeviceId);
-                ocrCuda = true;
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Warn("ONNX", $"[ocr] MaaFramework CUDA 选项设置失败，使用 CPU: {ex.GetBaseException().Message}");
-                resource.SetInference_UseCpu();
-            }
-        }
-        else
-        {
-            resource.SetInference_UseCpu();
-        }
-        try
-        {
-            resource.AppendOcrModel(Path.Combine(resourcePath, "model", "ocr")).Wait();
-            OnnxRuntimeConfig.ReportConsumer("ocr", ocrCuda ? $"CUDA:{OnnxRuntimeConfig.DeviceId}" : "CPU");
-        }
-        catch (Exception ex) when (ocrCuda)
-        {
-            AppLogger.Warn("ONNX", $"[ocr] MaaFramework CUDA OCR 模型加载失败，回落 CPU: {ex.GetBaseException().Message}");
-            resource.Dispose();
-            resource = new MaaResource();
-            resource.SetInference_UseCpu();
-            resource.AppendOcrModel(Path.Combine(resourcePath, "model", "ocr")).Wait();
-            OnnxRuntimeConfig.ReportConsumer("ocr", "CPU");
-        }
+        // MaaFramework 5.8.0 内置的 libMaaFramework.so/libfastdeploy_ppocr.so 在 Linux 下以 CPU 后端编译，
+        // 若直接传入 CUDA EP 会报 invalid inference execution provider，因此这里显式使用 CPU 并如实上报状态。
+        resource.SetInference_UseCpu();
+        resource.AppendOcrModel(Path.Combine(resourcePath, "model", "ocr")).Wait();
+        OnnxRuntimeConfig.ReportConsumer("ocr", "CPU");
 #else
         resource.SetInference_UseCpu();
         resource.AppendOcrModel(Path.Combine(resourcePath, "model", "ocr")).Wait();

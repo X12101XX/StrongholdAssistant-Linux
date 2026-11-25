@@ -11,8 +11,6 @@
   import StrategyGrid from '../components/StrategyGrid.svelte'
   import RosterBar from '../components/RosterBar.svelte'
   import { roster } from '../lib/roster.svelte'
-  import { fly } from 'svelte/transition'
-  import { cubicOut } from 'svelte/easing'
 
 
   // 图鉴：干员 / 装备网格，筛选常驻展开；点卡片在底部面板看详情（不靠悬停）。
@@ -149,7 +147,7 @@
     </div>
   </div>
   {#key kind}
-  <div in:fly={{ x: 10 * dir, duration: 90, easing: cubicOut }}>
+  <div class="subpane" class:from-r={dir > 0} class:from-l={dir < 0}>
   {#if kind === 'strategy'}
     <!-- 仿游戏「策略报告」：上面详情（默认本局策略），下面按泛用型 / 盟约型分组排头像 -->
     <div class="strats" style:--sticky-top="{topH}px"><StrategyGrid {q} current={app.match.strategyId} /></div>
@@ -714,6 +712,23 @@
   .ec {
     font-size: var(--fs-xs);
     color: var(--fg-4);
+  }
+  .subpane {
+    will-change: transform, opacity;
+  }
+  .subpane.from-r {
+    animation: subpane-r 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .subpane.from-l {
+    animation: subpane-l 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes subpane-r {
+    from { opacity: 0; transform: translate3d(14px, 0, 0) scale(0.992); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  }
+  @keyframes subpane-l {
+    from { opacity: 0; transform: translate3d(-14px, 0, 0) scale(0.992); }
+    to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
   }
   .none {
     color: var(--fg-3);

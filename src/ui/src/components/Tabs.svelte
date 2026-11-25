@@ -39,10 +39,16 @@
     height: 38px;
     padding-bottom: 1px;
     color: var(--fg-3);
-    transition: color var(--t-mid);
+    transition:
+      color var(--t-mid),
+      background var(--t-mid),
+      transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
   }
   button:hover {
     color: var(--fg-1);
+  }
+  button:active {
+    transform: scale(0.96);
   }
   .in {
     display: flex;
@@ -73,7 +79,7 @@
     width: calc(100% / var(--n));
     height: 3px;
     pointer-events: none;
-    transition: transform var(--t-mid) var(--ease-out);
+    transition: transform 260ms cubic-bezier(0.34, 1.38, 0.64, 1);
   }
   .ink::after {
     /* 斜切亮条 */
